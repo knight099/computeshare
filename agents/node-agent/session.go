@@ -68,11 +68,12 @@ func newSessionManager(dir string, state State) (*SessionManager, error) {
 	} else if !os.IsNotExist(e) {
 		return nil, e
 	}
+	if m.session.Status == "STARTING" {
+		m.stopLocal("STOPPED")
+	}
 	return m, nil
 }
-func (m *SessionManager) stopLocal(status string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *SessionManager) stopLocked(status string) {
 	m.generation++
 	if m.cancel != nil {
 		m.cancel()
@@ -83,7 +84,57 @@ func (m *SessionManager) stopLocal(status string) {
 	}
 	if m.session.ID != "" {
 		m.session.Status = status
-		_ = save(filepath.Join(m.dir, "session.json"), m.session)
+	}
+}
+func (m *SessionManager) stopLocal(status string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopLocked(status)
+	if m.session.ID != "" {
+		_ = withSessionLock(m.dir, func() error { return save(filepath.Join(m.dir, "session.json"), m.session) })
+	}
+}
+func (m *SessionManager) prepareStart(boot string, up float64, duration int, p ResourcePolicy) (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	err := withSessionLock(m.dir, func() error {
+		m.stopLocked("STOPPED")
+		m.session = LocalSession{randomID(), "STARTING", boot, up + float64(duration), time.Now().Add(time.Duration(duration) * time.Second), p}
+		return save(filepath.Join(m.dir, "session.json"), m.session)
+	})
+	return m.generation, err
+}
+func (m *SessionManager) adoptSession(generation uint64, session LocalSession) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return withSessionLock(m.dir, func() error {
+		if m.generation != generation || m.session.Status != "STARTING" {
+			return errors.New("sharing was stopped while starting")
+		}
+		if b, e := readSecret(filepath.Join(m.dir, "session.json")); e == nil {
+			var disk LocalSession
+			if json.Unmarshal(b, &disk) == nil && disk.ID == m.session.ID && disk.Status == "STOPPED" {
+				m.stopLocked("STOPPED")
+				return errors.New("sharing was stopped while starting")
+			}
+		}
+		m.session = session
+		if e := save(filepath.Join(m.dir, "session.json"), session); e != nil {
+			m.stopLocked("STOPPED")
+			return errors.New("cannot persist local expiry policy")
+		}
+		m.LastError = ""
+		return nil
+	})
+}
+func (m *SessionManager) checkDiskStop() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if b, e := readSecret(filepath.Join(m.dir, "session.json")); e == nil {
+		var disk LocalSession
+		if json.Unmarshal(b, &disk) == nil && disk.ID == m.session.ID && disk.Status == "STOPPED" && (m.session.Status == "ACTIVE" || m.session.Status == "STARTING") {
+			m.stopLocked("STOPPED")
+		}
 	}
 }
 func (m *SessionManager) snapshot() LocalSession {
@@ -112,13 +163,8 @@ func (m *SessionManager) watch(ctx context.Context) {
 			m.stopLocal("STOPPED")
 			return
 		case <-timer.C:
-			s := m.snapshot()
-			if b, e := readSecret(filepath.Join(m.dir, "session.json")); e == nil {
-				var disk LocalSession
-				if json.Unmarshal(b, &disk) == nil && disk.ID == s.ID && disk.Status == "STOPPED" && s.Status == "ACTIVE" {
-					m.stopLocal("STOPPED")
-				}
-			}
+			m.snapshot()
+			m.checkDiskStop()
 		}
 	}
 }
@@ -150,10 +196,18 @@ func (m *SessionManager) start(ctx context.Context, b StartSharing) error {
 		return errors.New("local expiry clock unavailable")
 	}
 	wallExpiry := time.Now().Add(time.Duration(b.Duration) * time.Second)
-	m.stopLocal("STOPPED")
-	m.mu.Lock()
-	generation := m.generation
-	m.mu.Unlock()
+	generation, e := m.prepareStart(boot, up, b.Duration, b.Policy)
+	if e != nil {
+		return e
+	}
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.generation == generation && m.session.Status == "STARTING" {
+			m.stopLocked("STOPPED")
+			_ = withSessionLock(m.dir, func() error { return save(filepath.Join(m.dir, "session.json"), m.session) })
+		}
+	}()
 	token, e := deviceToken(ctx, m.state)
 	if e != nil {
 		return e
@@ -171,18 +225,7 @@ func (m *SessionManager) start(ctx context.Context, b StartSharing) error {
 	if session.Expires.Before(wallExpiry) {
 		wallExpiry = session.Expires
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.generation != generation {
-		return errors.New("sharing was stopped while starting")
-	}
-	m.session = LocalSession{session.ID, "ACTIVE", boot, up + float64(b.Duration), wallExpiry, b.Policy}
-	if e = save(filepath.Join(m.dir, "session.json"), m.session); e != nil {
-		m.session.Status = "STOPPED"
-		return errors.New("cannot persist local expiry policy")
-	}
-	m.LastError = ""
-	return nil
+	return m.adoptSession(generation, LocalSession{session.ID, "ACTIVE", boot, up + float64(b.Duration), wallExpiry, b.Policy})
 }
 func (m *SessionManager) begin(job HashJob, cancel context.CancelFunc) bool {
 	s := m.snapshot()

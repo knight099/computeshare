@@ -448,16 +448,7 @@ func main() {
 	case "enroll":
 		err = enroll(ctx, normalized, *dir, *name, *accepted)
 	case "stop":
-		var session LocalSession
-		b, e := readSecret(filepath.Join(*dir, "session.json"))
-		if e != nil {
-			err = e
-		} else if e = json.Unmarshal(b, &session); e != nil {
-			err = e
-		} else {
-			session.Status = "STOPPED"
-			err = save(filepath.Join(*dir, "session.json"), session)
-		}
+		err = stopFromCLI(*dir)
 	case "run":
 		err = run(ctx, *dir, *port)
 	default:

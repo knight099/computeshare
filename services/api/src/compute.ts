@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ControlMessage } from "../../../packages/protocol/src/index.ts";
 import { HttpError, requireRole } from "./auth.ts";
+import { lockCompute } from "./compute-maintenance.ts";
 
 export const policySchema = z
   .object({
@@ -115,6 +116,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
     const c = await pool.connect();
     try {
       await c.query("BEGIN");
+      await lockCompute(c);
       const d = await c.query(
         "SELECT id FROM devices WHERE id=$1 AND revoked_at IS NULL AND ($2::uuid IS NULL OR owner_id=$2) FOR UPDATE",
         [b.device_id, owner ?? null],
@@ -126,7 +128,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       );
       for (const row of previous.rows) await stop(c, row.id, b.device_id);
       const { rows } = await c.query(
-        "INSERT INTO availability_sessions(device_id,expires_at,requested_duration_seconds,status,policy_snapshot,consent_version) VALUES($1,now()+$2*interval '1 second',$2,'ACTIVE',$3,$4) RETURNING *",
+        "INSERT INTO availability_sessions(device_id,starts_at,expires_at,requested_duration_seconds,status,policy_snapshot,consent_version) VALUES($1,statement_timestamp(),statement_timestamp()+$2*interval '1 second',$2,'ACTIVE',$3,$4) RETURNING *",
         [b.device_id, b.duration_seconds, b.policy, b.consent_version],
       );
       await c.query(
@@ -159,6 +161,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       const c = await pool.connect();
       try {
         await c.query("BEGIN");
+        await lockCompute(c);
         const q = await c.query(
           "SELECT s.device_id FROM availability_sessions s JOIN devices d ON d.id=s.device_id WHERE s.id=$1 AND ($2::uuid IS NULL OR d.owner_id=$2) AND ($3::uuid IS NULL OR d.id=$3) FOR UPDATE OF d",
           [id, u?.id ?? null, d?.id ?? null],
@@ -182,7 +185,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       .uuid()
       .parse((r.params as { id: string }).id);
     const { rows } = await pool.query(
-      "SELECT s.*,CASE WHEN s.status='ACTIVE' AND s.expires_at<=now() THEN 'EXPIRED' ELSE s.status END AS status FROM availability_sessions s JOIN devices d ON d.id=s.device_id WHERE s.id=$1 AND d.owner_id=$2",
+      "SELECT s.*,CASE WHEN s.status='ACTIVE' AND s.expires_at<=clock_timestamp() THEN 'EXPIRED' ELSE s.status END AS status FROM availability_sessions s JOIN devices d ON d.id=s.device_id WHERE s.id=$1 AND d.owner_id=$2",
       [id, u.id],
     );
     if (!rows[0]) throw new HttpError(404, "Session not found");
@@ -196,6 +199,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
     const c = await pool.connect();
     try {
       await c.query("BEGIN");
+      await lockCompute(c);
       let { rows } = await c.query(
         "INSERT INTO jobs(submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state) VALUES($1,$2,$3,$4,$5,'QUEUED') ON CONFLICT(submitter_id,idempotency_key) DO NOTHING RETURNING *",
         [u.id, b.idempotency_key, b.workload_type, payload, b.timeout_seconds],
@@ -297,6 +301,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
     const c = await pool.connect();
     try {
       await c.query("BEGIN");
+      await lockCompute(c);
       const q = await c.query(
         "UPDATE jobs SET state='CANCELED' WHERE id=$1 AND ($2 OR submitter_id=$3) AND state IN ('QUEUED','RUNNING') RETURNING id",
         [id, u.roles.includes("operator_admin"), u.id],
@@ -325,15 +330,16 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
     const c = await pool.connect();
     try {
       await c.query("BEGIN");
+      await lockCompute(c);
       // Serialize scheduling and session Stop using the same device lock order.
       await c.query("SELECT id FROM devices WHERE id=$1 FOR UPDATE", [device]);
       const expired = await c.query(
-        "SELECT id FROM availability_sessions WHERE device_id=$1 AND status='ACTIVE' AND expires_at<=now()",
+        "SELECT id FROM availability_sessions WHERE device_id=$1 AND status='ACTIVE' AND expires_at<=clock_timestamp()",
         [device],
       );
       for (const s of expired.rows) await stop(c, s.id, device, "EXPIRED");
       const lost = await c.query(
-        "UPDATE job_attempts SET state='LOST',finished_at=now() WHERE device_id=$1 AND lease_expires_at<=now() AND state IN ('OFFERED','ACCEPTED','RUNNING') RETURNING job_id,id",
+        "UPDATE job_attempts SET state='LOST',finished_at=now() WHERE device_id=$1 AND lease_expires_at<=clock_timestamp() AND state IN ('OFFERED','ACCEPTED','RUNNING') RETURNING job_id,id",
         [device],
       );
       for (const a of lost.rows) {
@@ -349,7 +355,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       if (m.attempt) {
         const a = (
           await c.query(
-            "SELECT a.*,j.payload,j.state AS job_state FROM job_attempts a JOIN jobs j ON j.id=a.job_id JOIN availability_sessions s ON s.id=a.session_id WHERE a.id=$1 AND a.device_id=$2 AND a.epoch=$3 AND a.lease_expires_at>now() AND s.status='ACTIVE' AND s.expires_at>now() FOR UPDATE OF a",
+            "SELECT a.*,j.payload,j.state AS job_state FROM job_attempts a JOIN jobs j ON j.id=a.job_id JOIN availability_sessions s ON s.id=a.session_id WHERE a.id=$1 AND a.device_id=$2 AND a.epoch=$3 AND a.lease_expires_at>clock_timestamp() AND s.status='ACTIVE' AND s.expires_at>clock_timestamp() FOR UPDATE OF a",
             [m.attempt.id, device, m.attempt.epoch],
           )
         ).rows[0];
@@ -392,10 +398,14 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
           }
         }
       }
-      if (m.type === "WORK_REQUEST" && m.session?.status === "ACTIVE") {
+      if (
+        m.type === "WORK_REQUEST" &&
+        m.session?.status === "ACTIVE" &&
+        !m.attempt
+      ) {
         const s = (
           await c.query(
-            "SELECT s.* FROM availability_sessions s JOIN devices d ON d.id=s.device_id WHERE s.id=$1 AND s.device_id=$2 AND s.status='ACTIVE' AND s.expires_at>now()+interval '6 seconds' AND d.revoked_at IS NULL AND d.capabilities->'runtimes' ? 'synthetic-hash-v1'",
+            "SELECT s.* FROM availability_sessions s JOIN devices d ON d.id=s.device_id WHERE s.id=$1 AND s.device_id=$2 AND s.status='ACTIVE' AND s.expires_at>clock_timestamp()+interval '6 seconds' AND d.revoked_at IS NULL AND d.capabilities->'runtimes' ? 'synthetic-hash-v1'",
             [m.session.id, device],
           )
         ).rows[0];

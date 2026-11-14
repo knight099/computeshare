@@ -653,6 +653,198 @@ test(
     }
   },
 );
+test(
+  "cancellation never replaces the cancel signal with a new offer",
+  { timeout: 10000 },
+  async () => {
+    const session = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions",
+        headers: auth(alice),
+        payload: {
+          device_id: device,
+          duration_seconds: 21600,
+          policy: {
+            cpu_percent: 25,
+            memory_mb: 128,
+            gpu_enabled: false,
+            idle_only: false,
+          },
+          consent_version: "sharing-v1",
+          accepted: true,
+        },
+      })
+    ).json();
+    const create = async (key: string) =>
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/jobs",
+          headers: auth(operator),
+          payload: {
+            idempotency_key: key,
+            workload_type: "synthetic-hash-v1",
+            seed: "public",
+            iterations: 2,
+          },
+        })
+      ).json();
+    const a = await create("cancel-first");
+    await create("cancel-next");
+    const socket = await connect(await credential());
+    let seq = 0;
+    const frame = async (type: string, extra: Record<string, unknown> = {}) => {
+      const reply = once(socket, "message");
+      socket.send(
+        JSON.stringify({
+          ...message(device, seq++, type),
+          session: { id: session.id, status: "ACTIVE" },
+          ...extra,
+        }),
+      );
+      return JSON.parse((await reply)[0].toString());
+    };
+    try {
+      await frame("HELLO", {
+        capabilities: { ...caps, runtimes: ["synthetic-hash-v1"] },
+      });
+      const offer = (await frame("WORK_REQUEST")).offer;
+      assert.equal(offer.job_id, a.id);
+      const attempt = { id: offer.attempt_id, epoch: 1 };
+      await frame("JOB_ACCEPT", { attempt });
+      await frame("JOB_START", { attempt });
+      await app.inject({
+        method: "POST",
+        url: "/v1/jobs/" + a.id + "/cancel",
+        headers: auth(operator),
+      });
+      const answer = await frame("WORK_REQUEST", { attempt });
+      assert.equal(answer.cancel_attempt_id, attempt.id);
+      assert.equal(answer.offer, undefined);
+    } finally {
+      socket.close();
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions/" + session.id + "/stop",
+        headers: auth(alice),
+      });
+      await pool.query("UPDATE jobs SET state='CANCELED' WHERE state='QUEUED'");
+    }
+  },
+);
+test(
+  "cancel and completion use the same transaction lock before changing rows",
+  { timeout: 15000 },
+  async () => {
+    const session = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions",
+        headers: auth(alice),
+        payload: {
+          device_id: device,
+          duration_seconds: 21600,
+          policy: {
+            cpu_percent: 25,
+            memory_mb: 128,
+            gpu_enabled: false,
+            idle_only: false,
+          },
+          consent_version: "sharing-v1",
+          accepted: true,
+        },
+      })
+    ).json();
+    const job = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/jobs",
+        headers: auth(operator),
+        payload: {
+          idempotency_key: "concurrent-cancel",
+          workload_type: "synthetic-hash-v1",
+          seed: "public",
+          iterations: 2,
+        },
+      })
+    ).json();
+    const socket = await connect(await credential());
+    let seq = 0;
+    const frame = async (type: string, extra: Record<string, unknown> = {}) => {
+      const answer = once(socket, "message");
+      socket.send(
+        JSON.stringify({
+          ...message(device, seq++, type),
+          session: { id: session.id, status: "ACTIVE" },
+          ...extra,
+        }),
+      );
+      return JSON.parse((await answer)[0].toString());
+    };
+    const blocker = await pool.connect();
+    let completion: Promise<unknown> | undefined;
+    let cancellation: Promise<{ statusCode: number }> | undefined;
+    try {
+      await frame("HELLO", {
+        capabilities: { ...caps, runtimes: ["synthetic-hash-v1"] },
+      });
+      const offer = (await frame("WORK_REQUEST")).offer;
+      const attempt = { id: offer.attempt_id, epoch: 1 };
+      await frame("JOB_ACCEPT", { attempt });
+      await frame("JOB_START", { attempt });
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT pg_advisory_xact_lock(78230002)");
+      completion = frame("JOB_COMPLETE", {
+        attempt: {
+          ...attempt,
+          result:
+            "315fc33dbdb63592565e8ed77eff5d3cf512638ea9b26631b7277cc73a3fc395",
+        },
+      });
+      cancellation = app.inject({
+        method: "POST",
+        url: "/v1/jobs/" + job.id + "/cancel",
+        headers: auth(operator),
+      });
+      const end = Date.now() + 3000;
+      let waiting = 0;
+      while (Date.now() < end) {
+        waiting = (
+          await adminPool.query(
+            "SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event='advisory' AND query LIKE '%78230002%' AND state='active'",
+          )
+        ).rows[0].n;
+        if (waiting >= 2) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assert(
+        waiting >= 2,
+        "both mutation paths must acquire the shared lock first",
+      );
+      assert.equal(
+        (await blocker.query("SELECT state FROM jobs WHERE id=$1", [job.id]))
+          .rows[0].state,
+        "RUNNING",
+      );
+      await blocker.query("COMMIT");
+      const [ack, canceled] = await Promise.all([completion, cancellation]);
+      assert(ack);
+      assert(canceled);
+      assert([200, 409].includes(canceled.statusCode));
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await Promise.allSettled([completion, cancellation]);
+      socket.close();
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions/" + session.id + "/stop",
+        headers: auth(alice),
+      });
+    }
+  },
+);
 test("revocation disconnects active agent and rejects fresh authentication", async () => {
   const socket = await connect(await credential());
   const acknowledged = once(socket, "message");

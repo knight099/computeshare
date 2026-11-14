@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -65,5 +66,30 @@ func TestExpiredSessionCancelsOfflineAndCannotResume(t *testing.T) {
 	restored, err := newSessionManager(m.dir, State{})
 	if err != nil || restored.snapshot().Status != "EXPIRED" {
 		t.Fatal("expired session revived after restart")
+	}
+}
+
+func TestStopWinsAgainstPendingStartAndCLIStopDuringStartup(t *testing.T) {
+	m := &SessionManager{dir: t.TempDir()}
+	gen, err := m.prepareStart("boot", 100, 21600, ResourcePolicy{CPUPercent: 25, MemoryMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.stopLocal("STOPPED")
+	if m.adoptSession(gen, LocalSession{ID: "remote", Status: "ACTIVE"}) == nil {
+		t.Fatal("start resumed after successful Stop")
+	}
+	gen, err = m.prepareStart("boot", 100, 21600, ResourcePolicy{CPUPercent: 25, MemoryMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disk := m.session
+	disk.Status = "STOPPED"
+	if err = save(filepath.Join(m.dir, "session.json"), disk); err != nil {
+		t.Fatal(err)
+	}
+	m.checkDiskStop()
+	if m.adoptSession(gen, LocalSession{ID: "remote", Status: "ACTIVE"}) == nil {
+		t.Fatal("CLI Stop ignored during pending network start")
 	}
 }

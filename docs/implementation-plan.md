@@ -22,10 +22,13 @@ Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). Th
 - [x] Operator device-list UI and contributor owner-scoped enrollment/device views.
 - [x] Database-backed security tests for two-user isolation, consent, revocation, protocol and challenge replay.
 - [x] Initial native CLI/provider/registry E2E and revocation passed against the real Compose stack in CI.
-- [ ] Full gate: browser console PKCE and reconnect verification against the Compose stack.
-- [ ] Follow-up: scheduled credential/challenge retention, capability-change snapshots, scoped support/admin revocation workflow, documented key rotation, proxy/IPv6 network matrix.
+- [x] Full gate: Chromium console PKCE/CORS/state failure checks and gateway restart/reconnect passed in CI run 43636374418.
+- [x] Scheduled credential/challenge retention, atomic capability-change snapshots, and documented manual key replacement.
+- [ ] Follow-up: administrator-assisted revocation/key rotation and production proxy/IPv6/CGNAT matrix.
 
 ## M2 — Contributor sessions and safe compute
+
+Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. Local API/session/lease tests pass; constrained worker/browser/100-job/partition CI acceptance is pending until recorded below. Separate Go scheduler/NATS outbox, TypeScript SDK/artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
 
 - [ ] Availability sessions with 1/2/4/6/8/12-hour presets, immutable policy and consent snapshots; no automatic renewal.
 - [ ] Local offline expiry and Stop, idle detection abstraction, sleep/reboot/network/power transitions.

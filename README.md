@@ -2,7 +2,7 @@
 
 An open-source, self-hosted compute-contribution framework. Each company owns its control plane, identity provider, device fleet, policies, branding, and data.
 
-**Current release: M0 / initial M1 enrollment preview.** The API, company console, and Linux agent support identity, explicit enrollment consent, device-key registration, outbound heartbeats, revocation, and audit history. **This release does not run compute jobs, start sharing sessions, or issue credits.** It is not production-ready.
+**Current release: M1 identity complete, M2 synthetic compute preview.** The platform supports OIDC/PKCE, explicit consent, public-key enrollment, outbound heartbeats, revocation, capability history and credential cleanup. The new local contributor dashboard supports timed sharing, offline Stop/expiry, constrained built-in CPU hashes, and job/result views. **No credits, arbitrary workloads, GPU execution or signed installers are implemented.** This is not production-ready.
 
 ## Run locally
 
@@ -30,7 +30,7 @@ bin/opencompute-agent enroll --gateway http://localhost:8080 --name my-linux-pc 
 bin/opencompute-agent run
 ```
 
-Review the [enrollment disclosure](docs/contributor-guide.md) before accepting. Stop the agent with Ctrl+C. Registering a device does not authorize future compute execution. Future sharing sessions require their own explicit resource and duration consent.
+Review the [enrollment disclosure](docs/contributor-guide.md) before accepting. Stop the agent with Ctrl+C. Registering a device does not authorize compute execution. Sharing requires separate local resource/duration consent and delegated cgroup v2 limits; see the contributor guide for the systemd scope setup.
 
 ## Verify
 
@@ -49,7 +49,7 @@ See [verification evidence](docs/verification.md) for what was actually run and 
 
 ## Architecture and delivery
 
-The Company Platform and Contributor Application are independently deployable products. A modular Fastify API owns identity/device domains, PostgreSQL owns durable state, and the Go agent connects outbound. The initial Next.js console includes owner-scoped device and enrollment views; later contributor session/history screens are tracked separately.
+The Company Platform and Contributor Application are independently deployable products. A modular Fastify API owns identity/device domains, PostgreSQL owns durable state, and the Go agent connects outbound. The Next.js console includes scoped device/job views. The Go agent serves its contributor controls on loopback, keeping Stop independent of company connectivity. Expanded policy adapters, durable scheduling, and credits remain tracked stages.
 
 - [Master product specification](OPENCOMPUTE_MASTER_BUILD_PLAN.md)
 - [All stages and implementation status](docs/implementation-plan.md)

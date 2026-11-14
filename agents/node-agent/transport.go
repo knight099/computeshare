@@ -85,7 +85,7 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 			message["capabilities"] = caps
 		}
 		session := m.snapshot()
-		if session.ID != "" {
+		if session.ID != "" && session.Status != "STARTING" {
 			message["session"] = map[string]string{"id": session.ID, "status": session.Status}
 		}
 		if attempt != nil {
@@ -161,7 +161,7 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 		case <-ticker.C:
 			session := m.snapshot()
 			identity := session.ID + ":" + session.Status
-			if session.ID == "" {
+			if session.ID == "" || session.Status == "STARTING" {
 				continue
 			}
 			if session.Status != "ACTIVE" && identity == lastSession {

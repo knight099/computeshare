@@ -64,7 +64,7 @@ jobs:
           sudo mkdir -p "$task_cgroup/manager" "$task_cgroup/workloads"
           printf '+cpu +memory +pids' | sudo tee "$task_cgroup/workloads/cgroup.subtree_control" >/dev/null
           sudo chown -R "$(id -u):$(id -g)" "$task_cgroup"
-          sudo /bin/sh -c 'echo $$ > "$1/manager/cgroup.procs"; exec setpriv --reuid "$2" --regid "$3" --init-groups env OPENCOMPUTE_CGROUP_ROOT="$1/workloads" "$4" tests/end-to-end/enrollment.mjs' sh "$task_cgroup" "$(id -u)" "$(id -g)" "$(command -v node)"
+          sudo /bin/sh -c 'echo $$ > "$1/manager/cgroup.procs"; exec setpriv --reuid "$2" --regid "$3" --init-groups env HOME="$5" OPENCOMPUTE_CGROUP_ROOT="$1/workloads" "$4" tests/end-to-end/enrollment.mjs' sh "$task_cgroup" "$(id -u)" "$(id -g)" "$(command -v node)" "$HOME"
       - name: Dependency outage distinguishes readiness and liveness
         run: |
           docker compose stop redis

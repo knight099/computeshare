@@ -6,6 +6,7 @@ import { probeStorage } from "./storage.ts";
 import { createDatabasePool } from "./database.ts";
 import { withDeadline } from "./deadline.ts";
 import { startAuthMaintenance } from "./maintenance.ts";
+import { startComputeMaintenance } from "./compute-maintenance.ts";
 
 const config = loadConfig(process.env);
 const pool = createDatabasePool(config.DATABASE_URL);
@@ -71,7 +72,11 @@ const stopMaintenance = startAuthMaintenance(pool, () =>
     "Expired credential cleanup will retry",
   ),
 );
+const stopComputeMaintenance = startComputeMaintenance(pool, () =>
+  app.log.warn({ event: "COMPUTE_EXPIRY_FAILED" }, "Compute expiry will retry"),
+);
 app.addHook("onClose", async () => {
+  await stopComputeMaintenance();
   await stopMaintenance();
   if (redis.isOpen) redis.destroy();
   await pool.end();
