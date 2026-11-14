@@ -53,7 +53,7 @@ export async function verifyBrowserLogin({
     await page
       .getByRole("button", { name: "Sign in to your organization →" })
       .click();
-    await page.getByRole("alert").waitFor();
+    await page.locator(".error[role=alert]").waitFor();
     assert.equal(
       await page.getByRole("button", { name: "Sign out", exact: true }).count(),
       0,
@@ -67,9 +67,9 @@ export async function verifyBrowserLogin({
       if (r.url().endsWith("/protocol/openid-connect/token")) tokenRequests++;
     });
     await invalid.goto(consoleURL + "/?code=forged&state=wrong");
-    await invalid.getByRole("alert").waitFor();
+    await invalid.locator(".error[role=alert]").waitFor();
     assert.match(
-      await invalid.getByRole("alert").innerText(),
+      await invalid.locator(".error[role=alert]").innerText(),
       /state mismatch/,
     );
     assert.equal(
