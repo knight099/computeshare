@@ -41,7 +41,8 @@ make test
 make build
 # Disposable database; tests create/drop their own isolated schema.
 TEST_DATABASE_URL=postgres://user:password@localhost:5432/test_db make test-integration
-# Requires make dev, built agent, and generated .env; uses a temporary Keycloak user.
+# Requires make dev, built agent, Chromium, generated .env and a delegated cgroup scope.
+# Uses a temporary Keycloak user; CI prepares these prerequisites explicitly.
 pnpm test:e2e
 ```
 

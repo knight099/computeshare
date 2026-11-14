@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenCompute enrollment API",
-    "version": "0.1.0",
-    "description": "M0/M1 skeleton. Execution is disabled. Device and human bearer tokens are different credential classes; see docs/api.md."
+    "version": "0.2.0-preview",
+    "description": "M1 identity and M2 public synthetic CPU preview. Local sharing consent and enforceable limits required; no credits or arbitrary workloads. See docs/api.md."
   },
   "paths": {
     "/healthz": {
@@ -443,6 +443,360 @@
           }
         }
       }
+    },
+    "/v1/availability-sessions": {
+      "post": {
+        "summary": "/v1/availability-sessions",
+        "operationId": "post_v1_availability_sessions",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartSharing"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agent/availability-sessions": {
+      "post": {
+        "summary": "/v1/agent/availability-sessions",
+        "operationId": "post_v1_agent_availability_sessions",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartSharing"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/availability-sessions/{id}": {
+      "get": {
+        "summary": "/v1/availability-sessions/{id}",
+        "operationId": "get_v1_availability_sessions_id",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/availability-sessions/{id}/stop": {
+      "post": {
+        "summary": "/v1/availability-sessions/{id}/stop",
+        "operationId": "post_v1_availability_sessions_id_stop",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/agent/availability-sessions/{id}/stop": {
+      "post": {
+        "summary": "/v1/agent/availability-sessions/{id}/stop",
+        "operationId": "post_v1_agent_availability_sessions_id_stop",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/jobs": {
+      "post": {
+        "summary": "/v1/jobs",
+        "operationId": "post_v1_jobs",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyntheticJob"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}": {
+      "get": {
+        "summary": "/v1/jobs/{id}",
+        "operationId": "get_v1_jobs_id",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/jobs/{id}/cancel": {
+      "post": {
+        "summary": "/v1/jobs/{id}/cancel",
+        "operationId": "post_v1_jobs_id_cancel",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/operator/jobs": {
+      "get": {
+        "summary": "/v1/operator/jobs",
+        "operationId": "get_v1_operator_jobs",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contributor/jobs": {
+      "get": {
+        "summary": "/v1/contributor/jobs",
+        "operationId": "get_v1_contributor_jobs",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md"
+          },
+          "default": {
+            "description": "Request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -527,6 +881,90 @@
           },
           "capabilities": {
             "$ref": "#/components/schemas/Capabilities"
+          }
+        }
+      },
+      "SharingPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cpu_percent", "memory_mb", "gpu_enabled", "idle_only"],
+        "properties": {
+          "cpu_percent": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 100
+          },
+          "memory_mb": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 1024
+          },
+          "gpu_enabled": {
+            "const": false
+          },
+          "idle_only": {
+            "const": false
+          }
+        }
+      },
+      "StartSharing": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "device_id",
+          "duration_seconds",
+          "policy",
+          "consent_version",
+          "accepted"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "duration_seconds": {
+            "enum": [3600, 7200, 14400, 21600, 28800, 43200]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/SharingPolicy"
+          },
+          "consent_version": {
+            "const": "sharing-v1"
+          },
+          "accepted": {
+            "const": true
+          }
+        }
+      },
+      "SyntheticJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "workload_type", "seed", "iterations"],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "workload_type": {
+            "const": "synthetic-hash-v1"
+          },
+          "seed": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9 _.-]+$"
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 10
           }
         }
       }

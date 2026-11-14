@@ -28,16 +28,20 @@ Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). Th
 
 ## M2 — Contributor sessions and safe compute
 
-Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. Local API/session/lease tests pass; constrained worker/browser/100-job/partition CI acceptance is pending until recorded below. Separate Go scheduler/NATS outbox, TypeScript SDK/artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
+Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. The CPU slice passed source and full-stack CI on a996ef4 (run 43640458682), including browser controls, 100 constrained jobs and Stop during a network partition. Separate Go scheduler/NATS outbox, TypeScript SDK/artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
 
-- [ ] Availability sessions with 1/2/4/6/8/12-hour presets, immutable policy and consent snapshots; no automatic renewal.
-- [ ] Local offline expiry and Stop, idle detection abstraction, sleep/reboot/network/power transitions.
-- [ ] Enforced CPU/RAM/disk/network caps; unsupported thermal/power/GPU controls prevent admission.
+- [x] Availability sessions with 1/2/4/6/8/12-hour presets, immutable policy and consent snapshots; no automatic renewal.
+- [x] Local Stop, boot-clock/offline expiry, reboot non-resumption, and connection-loss cancellation.
+- [ ] Idle/power/thermal policy adapters and full platform transition matrix.
+- [x] Enforced worker CPU/RAM/swap/pids limits. Unsupported GPU/idle/custom resource controls are rejected; no workload files or network destinations.
+- [ ] Broader disk/network/power/thermal policy controls.
 - [ ] Go scheduler: deterministic eligibility, remaining-time safety margin, atomic capacity reservation, offer/accept/reject, leases and epochs.
-- [ ] Allowlisted bounded CPU/hash/public-data transformations only; no scripts, arbitrary binaries, shell commands, images or GPU access.
+- [x] Allowlisted bounded public CPU hash worker; no scripts, arbitrary binaries, shell commands, images or GPU access.
+- [ ] Additional reviewed public-data transforms.
 - [ ] Versioned job API, SDK, artifact integrity and result interfaces; transactional outbox into durable events.
 - [ ] Contributor Home/settings/jobs/activity/diagnostics/privacy screens, resource telemetry and redacted job history.
-- [ ] Gate: six-hour session, successful synthetic work, Stop during partition, offline expiry, caps, NAT baseline and 100-job E2E.
+- [x] Initial CPU gate: six-hour session creation, 100 synthetic jobs, cgroup limits, offline Stop during partition, outbound/NAT baseline, and local boot-clock/expiry tests.
+- [ ] Full M2 gate remains open for the follow-ups above; no six-hour wall-clock soak or complete platform-policy certification claimed.
 
 ## M3 — Reliability, verification and simulated credits
 
@@ -102,3 +106,11 @@ Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR
 ## Next small delivery
 
 Complete M1 browser/reconnect acceptance before starting compute: add a real-browser console sign-in test (including CORS/state failure paths), exercise agent reconnect after gateway restart, capture capability revisions, and add scheduled credential/challenge retention. Require existing source/Compose tests plus the new browser/reconnect tests to pass. Then begin M2 with locally enforced availability and Stop/expiry tests, before allowing synthetic job dispatch.
+
+## Latest execution record
+
+M1 completion and initial M2 CPU slice are in PR #1. Current implementation evidence: CI 43640458682 on a996ef4, 4 unit + 19 PostgreSQL integration + 11 Go tests, production build, real Chromium/Keycloak/cgroup flow.
+
+Ruling: local Go-served contributor controls keep Stop independent of company connectivity; expanded Next.js/desktop presentation remains later. Ruling: initial FIFO/leases stay in the modular API, and one advisory transaction lock orders compute mutations; this trades throughput for simple, tested cancellation ordering. Standalone Go scheduling and durable queue delivery remain explicit follow-ups.
+
+Deferred review minors are listed in docs/verification.md and docs/threat-model.md: crash cleanup/parent-death handling, chronological history pagination, and asynchronous known-result verification.

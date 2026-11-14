@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { chromium } from "playwright";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 export async function verifyCompute({ base, headers, dashboard }) {
   const browser = await chromium.launch({ headless: true });
@@ -104,6 +106,29 @@ export async function verifyCompute({ base, headers, dashboard }) {
       const s = await state();
       return s.current_job === long.id && s.worker_running;
     }, 15000);
+    const root = process.env.OPENCOMPUTE_CGROUP_ROOT;
+    assert(root);
+    const groups = (await readdir(root)).filter((name) =>
+      name.startsWith("job-"),
+    );
+    assert.equal(groups.length, 1);
+    const group = join(root, groups[0]);
+    assert.equal(
+      (await readFile(join(group, "cpu.max"), "utf8")).trim(),
+      "10000 100000",
+    );
+    assert.equal(
+      (await readFile(join(group, "memory.max"), "utf8")).trim(),
+      String(64 * 1024 * 1024),
+    );
+    assert.equal(
+      (await readFile(join(group, "memory.swap.max"), "utf8")).trim(),
+      "0",
+    );
+    assert.equal(
+      (await readFile(join(group, "pids.max"), "utf8")).trim(),
+      "32",
+    );
     await compose("pause");
     paused = true;
     const stoppedAt = Date.now();
