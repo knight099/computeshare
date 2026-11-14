@@ -1,6 +1,6 @@
 # Verification evidence — enrollment preview
 
-Date: 2026-11-14. This records checks actually executed in the implementation workspace, not future milestone acceptance.
+Date: 2026-11-14. This records checks executed locally and in GitHub Actions, not future milestone acceptance. CI evidence: [implementation commit a4e9028](https://github.com/knight099/computeshare/actions/runs/43633202994).
 
 | Check                                                          | Observed result                                                                                       |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -29,4 +29,4 @@ The initially selected MinIO images were unavailable from the tested registries.
 
 Automatic review rejected broad Docker pruning because it could remove unrelated resources. Cleanup used specifically identified task-owned images/cache records instead. Active data services and persistent volumes were preserved.
 
-M0/M1 full-stack gates remain unchecked. M2–M6 implementation has not begun, following the master specification's rule against advancing with failed acceptance. No production, compute-execution, credit, signing or sandbox-readiness claim is made. See CI for subsequent full-stack evidence; update this record only after reading actual results.
+M0 foundation acceptance passed in CI. The initial M1 native enrollment flow also passed. The complete M1 gate remains open for browser console PKCE and reconnect verification, plus the follow-ups in the implementation checklist. M2–M6 implementation has not begun, following the master specification’s first-delivery work order and sequential acceptance rule. No production, compute-execution, credit, signing or sandbox-readiness claim is made.

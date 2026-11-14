@@ -10,7 +10,7 @@ Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). Th
 - [x] Compose definitions for database, Redis, durable NATS, S3, local OIDC, API and console.
 - [x] Initial ADR-001–010, threat model, security/contribution/license files, setup and API documentation.
 - [x] CI definitions for source checks, integration tests, agent tests, builds, Compose smoke and enrollment E2E.
-- [ ] Gate: clean-clone `make dev`, full Compose acceptance and CI success. See verification evidence for local checks and blockers.
+- [x] Gate: clean-clone `make dev`, full Compose acceptance, source checks and native enrollment E2E passed in [GitHub Actions](https://github.com/knight099/computeshare/actions/runs/43633202994). Local Docker VFS remains disk-limited; CI provides the acceptance evidence.
 
 ## M1 — Identity and device registry
 
@@ -21,7 +21,8 @@ Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). Th
 - [x] Outbound gateway, capability inventory, 15-second heartbeat, replay/identity validation, reconnect backoff, revocation and audit records.
 - [x] Operator device-list UI and contributor owner-scoped enrollment/device views.
 - [x] Database-backed security tests for two-user isolation, consent, revocation, protocol and challenge replay.
-- [ ] Gate: complete browser/CLI/provider/registry E2E and reconnect/revocation acceptance against the Compose stack.
+- [x] Initial native CLI/provider/registry E2E and revocation passed against the real Compose stack in CI.
+- [ ] Full gate: browser console PKCE and reconnect verification against the Compose stack.
 - [ ] Follow-up: scheduled credential/challenge retention, capability-change snapshots, scoped support/admin revocation workflow, documented key rotation, proxy/IPv6 network matrix.
 
 ## M2 — Contributor sessions and safe compute
@@ -94,3 +95,7 @@ Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). Th
 - Ruling: use maintained SeaweedFS S3 for local storage after official MinIO references failed. Cost: different development storage administration; S3 compatibility must be tested, and upstream licenses remain separate.
 - Ruling: Linux enrollment only in the initial agent, with no declared executable runtime. Cost: Windows/macOS enrollment waits for tested adapters.
 - Review focus: cross-user access, revoked/expired credentials, replayed proofs/messages, state-file exposure, failure of a dependency while liveness stays healthy.
+
+## Next small delivery
+
+Complete M1 browser/reconnect acceptance before starting compute: add a real-browser console sign-in test (including CORS/state failure paths), exercise agent reconnect after gateway restart, capture capability revisions, and add scheduled credential/challenge retention. Require existing source/Compose tests plus the new browser/reconnect tests to pass. Then begin M2 with locally enforced availability and Stop/expiry tests, before allowing synthetic job dispatch.
