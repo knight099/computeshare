@@ -5,6 +5,7 @@ import { buildApp } from "./app.ts";
 import { probeStorage } from "./storage.ts";
 import { createDatabasePool } from "./database.ts";
 import { withDeadline } from "./deadline.ts";
+import { startAuthMaintenance } from "./maintenance.ts";
 
 const config = loadConfig(process.env);
 const pool = createDatabasePool(config.DATABASE_URL);
@@ -64,7 +65,14 @@ const app = await buildApp(config, {
     );
   },
 });
+const stopMaintenance = startAuthMaintenance(pool, () =>
+  app.log.warn(
+    { event: "AUTH_MAINTENANCE_FAILED" },
+    "Expired credential cleanup will retry",
+  ),
+);
 app.addHook("onClose", async () => {
+  await stopMaintenance();
   if (redis.isOpen) redis.destroy();
   await pool.end();
 });

@@ -10,6 +10,7 @@ import {
   CONSENT_VERSION,
 } from "../../../packages/protocol/src/index.ts";
 import { HttpError, oidcVerifier, requireRole } from "./auth.ts";
+import { recordPresence } from "./presence.ts";
 
 export const tokenHash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -457,16 +458,12 @@ export async function buildApp(
           }
           // Revocation and token expiry are rechecked on every message, including existing connections.
           await deviceAuth(req);
-          const updated = await pool.query(
-            "UPDATE devices SET last_seen_at=now(),capabilities=COALESCE($2::jsonb,capabilities) WHERE id=$1 AND revoked_at IS NULL RETURNING id",
-            [
-              credential.id,
-              message.capabilities
-                ? JSON.stringify(message.capabilities)
-                : null,
-            ],
+          await recordPresence(
+            pool,
+            credential.id,
+            message.capabilities,
+            req.id,
           );
-          if (!updated.rowCount) throw new Error("Device unavailable");
           if (!hello)
             await audit(credential.id, "DEVICE_CONNECTED", credential.id, req);
           sequence = message.sequence;

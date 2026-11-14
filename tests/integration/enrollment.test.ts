@@ -366,6 +366,45 @@ test("gateway accepts HELLO/heartbeat, rejects replay and forged device identity
   ).json().devices[0].status;
   assert.equal(status, "online");
 });
+test("capability changes append one snapshot while repeated heartbeats do not", async () => {
+  const socket = await connect(await credential());
+  try {
+    let ack = once(socket, "message");
+    socket.send(JSON.stringify(message()));
+    await ack;
+    const changed = { ...caps, cpu_cores: 4 };
+    ack = once(socket, "message");
+    socket.send(
+      JSON.stringify({
+        ...message(device, 1, "HEARTBEAT"),
+        capabilities: changed,
+      }),
+    );
+    await ack;
+    ack = once(socket, "message");
+    socket.send(
+      JSON.stringify({
+        ...message(device, 2, "HEARTBEAT"),
+        capabilities: changed,
+      }),
+    );
+    await ack;
+    const snapshots = await pool.query(
+      "SELECT capabilities FROM device_capability_snapshots WHERE device_id=$1 ORDER BY id",
+      [device],
+    );
+    assert.equal(snapshots.rowCount, 2);
+    assert.equal(snapshots.rows[0].capabilities.cpu_cores, 2);
+    assert.equal(snapshots.rows[1].capabilities.cpu_cores, 4);
+    const records = await pool.query(
+      "SELECT 1 FROM audit_events WHERE action='CAPABILITIES_CHANGED' AND object_id=$1",
+      [device],
+    );
+    assert.equal(records.rowCount, 1);
+  } finally {
+    socket.close();
+  }
+});
 test("revocation disconnects active agent and rejects fresh authentication", async () => {
   const socket = await connect(await credential());
   const acknowledged = once(socket, "message");

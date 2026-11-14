@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { randomBytes } from "node:crypto";
 import assert from "node:assert/strict";
+import { verifyBrowserLogin } from "./browser.mjs";
 
 const env = Object.fromEntries(
   (await readFile(".env", "utf8"))
@@ -65,7 +66,7 @@ async function successful(cmd) {
 const deadline = setTimeout(() => {
   for (const child of childProcesses) child.kill("SIGKILL");
   process.exitCode = 1;
-}, 90000);
+}, 180000);
 try {
   assert.equal((await fetch(base + "/readyz")).status, 200);
   const token = await json(
@@ -171,6 +172,29 @@ try {
       (d) => d.id === device.device_id && d.status === "online",
     );
   });
+  await verifyBrowserLogin({
+    consoleURL: process.env.E2E_CONSOLE_URL ?? "http://localhost:3000",
+    identity,
+    username,
+    password,
+    deviceName: "acceptance-linux",
+  });
+  const connections =
+    runner.output().split("Connected to company gateway").length - 1;
+  const restarted = spawn("docker", ["compose", "restart", "api"], {
+    stdio: "ignore",
+  });
+  childProcesses.push(restarted);
+  assert.equal((await once(restarted, "exit"))[0], 0);
+  await until(
+    () =>
+      runner.output().split("Connected to company gateway").length - 1 >
+      connections,
+    45000,
+  );
+  console.log(
+    "PASS: agent reconnect after real gateway restart with fresh device authentication",
+  );
   runner.child.kill("SIGTERM");
   await successful(runner);
   assert.equal(
