@@ -32,6 +32,17 @@ export async function verifyBrowserLogin({
       .getByRole("heading", { name: "Device fleet", exact: true })
       .waitFor();
     await page.getByText(deviceName, { exact: true }).waitFor();
+    await page.getByRole("button", { name: /Jobs/ }).click();
+    await page
+      .getByRole("heading", { name: "Submit a safe hash job" })
+      .waitFor();
+    await page.getByLabel("Public seed").fill("public-browser-job");
+    await page.getByLabel("Hash iterations").fill("1000");
+    const submitted = page.waitForResponse(
+      (r) => r.url().endsWith("/v1/jobs") && r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Submit synthetic job" }).click();
+    assert.equal((await submitted).status(), 201);
     assert.equal(
       new URL(page.url()).search,
       "",

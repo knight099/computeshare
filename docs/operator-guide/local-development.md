@@ -23,3 +23,15 @@ Run `pnpm migrate`, `pnpm dev:api`, and `pnpm dev:console`. Native tools do not 
 `make down` stops the stack while preserving volumes. Database migrations are transactional and repeatable. Do not delete volumes to fix an identity/configuration mismatch: restore the original operator UUID or deliberately provision a separate deployment.
 
 The initial API has a 32 KiB HTTP body limit, 16 KiB WebSocket limit, 240 requests/verified-user/minute and a separate 240 device-auth requests/IP/minute and a single-process gateway. Console lists show the latest 200 devices/events. Resource inventory is not available capacity. Production deployment, backup, signed releases, retention, HA and migration rollback are tracked milestones, not implemented guarantees.
+
+## Credential retention and device key replacement
+
+The API removes expired device credentials and authentication challenges at startup and once per minute. Cleanup never deletes registry, consent, capability history, or audit records. Failed cleanup is logged without credential contents and retried on the next interval. Live authentication always checks expiry, so cleanup timing cannot extend credential validity.
+
+Capability changes received over an authenticated connection update the device and append a snapshot plus `CAPABILITIES_CHANGED` audit event in one transaction. Unchanged HELLO/heartbeats do not duplicate history. Device claims remain untrusted inventory.
+
+For a deliberate device-key replacement: revoke the old device using the owner's authenticated endpoint, stop its local agent, and enroll a new identity using a new private `--state-dir`. Verify the old device cannot reconnect before deleting its old private key. Do not overwrite a state file to silently retarget an operator. Automatic rotating identities and administrator-assisted recovery remain later distribution work.
+
+## Network verification boundaries
+
+CI verifies outbound enrollment/heartbeats from a Linux agent, actual browser-to-Keycloak PKCE/CORS, and reconnection after the gateway restarts. CLI login briefly listens on loopback only. Go HTTP and WebSocket clients honor standard proxy environment variables. A production operator must still validate its own HTTPS proxy configuration, IPv6, residential CGNAT, TLS termination, certificates, and idle timeouts; local CI is not a substitute for that compatibility matrix.

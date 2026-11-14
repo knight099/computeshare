@@ -12,6 +12,9 @@ export async function migrate(pool: pg.Pool, config: Config) {
       await readFile(new URL("./schema.sql", import.meta.url), "utf8"),
     );
     await client.query(
+      await readFile(new URL("./002-compute.sql", import.meta.url), "utf8"),
+    );
+    await client.query(
       "INSERT INTO operators_config(singleton, operator_id, display_name) VALUES(true,$1,$2) ON CONFLICT DO NOTHING",
       [config.OPERATOR_ID, config.OPERATOR_NAME],
     );
@@ -37,7 +40,7 @@ if (
   const pool = new pg.Pool({ connectionString: config.DATABASE_URL });
   try {
     await migrate(pool, config);
-    console.log("Schema version 1 ready");
+    console.log("Schema version 2 ready");
   } finally {
     await pool.end();
   }

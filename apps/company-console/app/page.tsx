@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Jobs from "./jobs";
 
 type Config = {
   operator_id: string;
@@ -34,7 +35,9 @@ export default function Home() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"devices" | "activity" | "setup">("devices");
+  const [view, setView] = useState<"devices" | "activity" | "setup" | "jobs">(
+    "devices",
+  );
   const [events, setEvents] = useState<
     { id: number; action: string; object_id: string; created_at: string }[]
   >([]);
@@ -209,6 +212,14 @@ export default function Home() {
           >
             ▦ <span>{operator ? "Device fleet" : "My devices"}</span>
           </button>
+          {token && (
+            <button
+              className={view === "jobs" ? "selected" : ""}
+              onClick={() => setView("jobs")}
+            >
+              ▷ <span>Jobs</span>
+            </button>
+          )}
           {roles.some((r) => ["operator_admin", "auditor"].includes(r)) && (
             <button
               className={view === "activity" ? "selected" : ""}
@@ -241,9 +252,11 @@ export default function Home() {
               /{" "}
               {view === "devices"
                 ? "Devices"
-                : view === "activity"
-                  ? "Activity"
-                  : "Setup"}
+                : view === "jobs"
+                  ? "Jobs"
+                  : view === "activity"
+                    ? "Activity"
+                    : "Setup"}
             </span>
           </span>
           <div className="header-right">
@@ -281,16 +294,20 @@ export default function Home() {
                   ? operator
                     ? "Device fleet"
                     : "Connected devices"
-                  : view === "activity"
-                    ? "Audit activity"
-                    : "Build your network"}
+                  : view === "jobs"
+                    ? "Jobs"
+                    : view === "activity"
+                      ? "Audit activity"
+                      : "Build your network"}
               </h1>
               <p>
                 {view === "devices"
                   ? "A clear view of the devices enrolled with your organization."
-                  : view === "activity"
-                    ? "Recorded identity, enrollment, and device-security events."
-                    : "Start with identity, then enroll your first Linux device."}
+                  : view === "jobs"
+                    ? "Jobs"
+                    : view === "activity"
+                      ? "Recorded identity, enrollment, and device-security events."
+                      : "Start with identity, then enroll your first Linux device."}
               </p>
             </div>
             <span className="outline-badge">Outbound connections only ↗</span>
@@ -361,8 +378,8 @@ export default function Home() {
                     </article>
                     <article>
                       <span>Execution</span>
-                      <strong className="word">Disabled</strong>
-                      <small>Enrollment milestone</small>
+                      <strong className="word">Synthetic only</strong>
+                      <small>Explicit local consent required</small>
                     </article>
                   </div>
                   <section className="panel">
@@ -446,12 +463,25 @@ export default function Home() {
                   <div className="notice">
                     <span>ⓘ</span>
                     <p>
-                      <strong>Enrollment is the first step.</strong> Compute
-                      execution, sharing sessions, and credits are not enabled
-                      in this release. Registering a device does not start work.
+                      <strong>Explicit sharing consent is required.</strong>{" "}
+                      This preview runs only bounded public CPU hash jobs. Start
+                      and Stop live in the agent’s local contributor dashboard;
+                      credits are unavailable. Registering a device does not
+                      start work.
                     </p>
                   </div>
                 </>
+              )}
+              {view === "jobs" && (
+                <Jobs
+                  request={request}
+                  canSubmit={roles.some((r) =>
+                    ["operator_admin", "workload_submitter"].includes(r),
+                  )}
+                  contributor={
+                    !operator && !roles.includes("workload_submitter")
+                  }
+                />
               )}
               {view === "activity" && (
                 <section className="panel">
@@ -499,9 +529,10 @@ export default function Home() {
                       <p>
                         The agent shares OS, architecture, CPU count, memory
                         capacity, agent version, and connectivity with this
-                        operator. This release does not execute jobs.
-                        Availability is not billable usage. Participation is
-                        voluntary; stop the agent locally at any time.
+                        operator. Execution requires separate local sharing
+                        consent. Availability is not billable usage.
+                        Participation is voluntary; stop the agent locally at
+                        any time.
                       </p>
                       {roles.includes("contributor") && (
                         <button

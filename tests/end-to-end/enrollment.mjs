@@ -7,6 +7,7 @@ import { once } from "node:events";
 import { randomBytes } from "node:crypto";
 import assert from "node:assert/strict";
 import { verifyBrowserLogin } from "./browser.mjs";
+import { verifyCompute } from "./compute.mjs";
 
 const env = Object.fromEntries(
   (await readFile(".env", "utf8"))
@@ -66,7 +67,7 @@ async function successful(cmd) {
 const deadline = setTimeout(() => {
   for (const child of childProcesses) child.kill("SIGKILL");
   process.exitCode = 1;
-}, 180000);
+}, 300000);
 try {
   assert.equal((await fetch(base + "/readyz")).status, 200);
   const token = await json(
@@ -195,6 +196,13 @@ try {
   console.log(
     "PASS: agent reconnect after real gateway restart with fresh device authentication",
   );
+  const dashboard = await until(
+    () =>
+      runner
+        .output()
+        .match(/Contributor dashboard: (http:\/\/127\.0\.0\.1:\d+)/)?.[1],
+  );
+  await verifyCompute({ base, headers, dashboard });
   runner.child.kill("SIGTERM");
   await successful(runner);
   assert.equal(

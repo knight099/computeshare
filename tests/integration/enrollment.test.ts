@@ -405,6 +405,254 @@ test("capability changes append one snapshot while repeated heartbeats do not", 
     socket.close();
   }
 });
+test("sharing requires explicit consent, isolates owners, and respects Stop", async () => {
+  const body = {
+    device_id: device,
+    duration_seconds: 21600,
+    policy: {
+      cpu_percent: 25,
+      memory_mb: 128,
+      gpu_enabled: false,
+      idle_only: false,
+    },
+    consent_version: "sharing-v1",
+    accepted: true,
+  };
+  const refused = await app.inject({
+    method: "POST",
+    url: "/v1/availability-sessions",
+    headers: auth(alice),
+    payload: { ...body, accepted: false },
+  });
+  assert.equal(refused.statusCode, 400);
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions",
+        headers: auth(bob),
+        payload: body,
+      })
+    ).statusCode,
+    404,
+  );
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/availability-sessions",
+    headers: auth(alice),
+    payload: body,
+  });
+  assert.equal(response.statusCode, 201);
+  const session = response.json();
+  assert.equal(session.status, "ACTIVE");
+  assert.equal(
+    Date.parse(session.expires_at) - Date.parse(session.starts_at),
+    21600000,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        url: "/v1/availability-sessions/" + session.id,
+        headers: auth(bob),
+      })
+    ).statusCode,
+    404,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions/" + session.id + "/stop",
+        headers: auth(alice),
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        url: "/v1/availability-sessions/" + session.id,
+        headers: auth(alice),
+      })
+    ).json().status,
+    "STOPPED",
+  );
+});
+test("only allowlisted public synthetic jobs are accepted and submission is idempotent", async () => {
+  const payload = {
+    idempotency_key: "one-safe-job",
+    workload_type: "synthetic-hash-v1",
+    seed: "public-test",
+    iterations: 1000,
+    timeout_seconds: 10,
+  };
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/jobs",
+        headers: auth(alice),
+        payload,
+      })
+    ).statusCode,
+    403,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/jobs",
+        headers: auth(operator),
+        payload: { ...payload, command: "sh" },
+      })
+    ).statusCode,
+    400,
+  );
+  const first = await app.inject({
+    method: "POST",
+    url: "/v1/jobs",
+    headers: auth(operator),
+    payload,
+  });
+  assert.equal(first.statusCode, 201);
+  const duplicate = await app.inject({
+    method: "POST",
+    url: "/v1/jobs",
+    headers: auth(operator),
+    payload,
+  });
+  assert.equal(duplicate.json().id, first.json().id);
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/jobs",
+        headers: auth(operator),
+        payload: { ...payload, iterations: 2000 },
+      })
+    ).statusCode,
+    409,
+  );
+});
+test(
+  "leases fence attempts, reject early/invalid results, and verify only completed known work",
+  { timeout: 15000 },
+  async () => {
+    const body = {
+      device_id: device,
+      duration_seconds: 21600,
+      policy: {
+        cpu_percent: 25,
+        memory_mb: 128,
+        gpu_enabled: false,
+        idle_only: false,
+      },
+      consent_version: "sharing-v1",
+      accepted: true,
+    };
+    const session = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions",
+        headers: auth(alice),
+        payload: body,
+      })
+    ).json();
+    const socket = await connect(await credential());
+    let seq = 0;
+    const frame = async (type: string, extra: Record<string, unknown> = {}) => {
+      const wait = once(socket, "message");
+      socket.send(
+        JSON.stringify({
+          ...message(device, seq++, type),
+          session: { id: session.id, status: "ACTIVE" },
+          ...extra,
+        }),
+      );
+      return JSON.parse((await wait)[0].toString());
+    };
+    try {
+      await frame("HELLO", {
+        capabilities: { ...caps, runtimes: ["synthetic-hash-v1"] },
+      });
+      const offered = (await frame("WORK_REQUEST")).offer;
+      assert(offered);
+      const attempt = { id: offered.attempt_id, epoch: offered.epoch };
+      await frame("JOB_COMPLETE", {
+        attempt: { ...attempt, result: "0".repeat(64) },
+      });
+      assert.equal(
+        (
+          await app.inject({
+            url: "/v1/jobs/" + offered.job_id,
+            headers: auth(operator),
+          })
+        ).json().state,
+        "RUNNING",
+      );
+      assert.equal(
+        (await frame("JOB_ACCEPT", { attempt: { ...attempt, epoch: 999 } }))
+          .cancel_attempt_id,
+        attempt.id,
+      );
+      await frame("JOB_ACCEPT", { attempt });
+      await frame("JOB_START", { attempt });
+      assert.equal(
+        (
+          await frame("JOB_COMPLETE", {
+            attempt: { ...attempt, result: "0".repeat(64) },
+          })
+        ).job_state,
+        "FAILED",
+      );
+      const job = (
+        await app.inject({
+          method: "POST",
+          url: "/v1/jobs",
+          headers: auth(operator),
+          payload: {
+            idempotency_key: "known-vector",
+            workload_type: "synthetic-hash-v1",
+            seed: "public",
+            iterations: 2,
+            timeout_seconds: 10,
+          },
+        })
+      ).json();
+      const next = (await frame("WORK_REQUEST")).offer;
+      assert.equal(next.job_id, job.id);
+      const a = { id: next.attempt_id, epoch: next.epoch };
+      await frame("JOB_ACCEPT", { attempt: a });
+      await frame("JOB_START", { attempt: a });
+      const complete = {
+        ...a,
+        result:
+          "315fc33dbdb63592565e8ed77eff5d3cf512638ea9b26631b7277cc73a3fc395",
+      };
+      assert.equal(
+        (await frame("JOB_COMPLETE", { attempt: complete })).job_state,
+        "SUCCEEDED",
+      );
+      assert.equal(
+        (await frame("JOB_COMPLETE", { attempt: complete })).cancel_attempt_id,
+        a.id,
+      );
+      const events = await pool.query(
+        "SELECT 1 FROM job_events WHERE job_id=$1 AND state='VERIFIED'",
+        [job.id],
+      );
+      assert.equal(events.rowCount, 1);
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions/" + session.id + "/stop",
+        headers: auth(alice),
+      });
+      assert.equal((await frame("WORK_REQUEST")).offer, undefined);
+    } finally {
+      socket.close();
+    }
+  },
+);
 test("revocation disconnects active agent and rejects fresh authentication", async () => {
   const socket = await connect(await credential());
   const acknowledged = once(socket, "message");

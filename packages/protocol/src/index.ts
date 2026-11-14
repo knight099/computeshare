@@ -14,11 +14,37 @@ export const capabilitiesSchema = z
 export const controlMessageSchema = z
   .object({
     protocol_version: z.literal(1),
-    type: z.enum(["HELLO", "HEARTBEAT"]),
+    type: z.enum([
+      "HELLO",
+      "HEARTBEAT",
+      "WORK_REQUEST",
+      "JOB_ACCEPT",
+      "JOB_START",
+      "JOB_COMPLETE",
+      "JOB_FAIL",
+    ]),
     device_id: z.string().uuid(),
     sequence: z.number().int().nonnegative().safe(),
     trace_id: z.string().uuid(),
     capabilities: capabilitiesSchema.optional(),
+    session: z
+      .object({
+        id: z.string().uuid(),
+        status: z.enum(["ACTIVE", "STOPPED", "EXPIRED"]),
+      })
+      .strict()
+      .optional(),
+    attempt: z
+      .object({
+        id: z.string().uuid(),
+        epoch: z.number().int().positive(),
+        result: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

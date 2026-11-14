@@ -11,6 +11,7 @@ import {
 } from "../../../packages/protocol/src/index.ts";
 import { HttpError, oidcVerifier, requireRole } from "./auth.ts";
 import { recordPresence } from "./presence.ts";
+import { registerCompute } from "./compute.ts";
 
 export const tokenHash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -88,7 +89,7 @@ export async function buildApp(
       if (rate.until < Date.now()) rates.delete(key);
   }, 60000);
   gc.unref();
-  function consumeRate(key: string) {
+  function consumeRate(key: string, limit = 240) {
     const previous = rates.get(key);
     const rate =
       previous && previous.until > Date.now()
@@ -97,7 +98,7 @@ export async function buildApp(
     if (rates.size >= 10000 && !rates.has(key))
       throw new HttpError(429, "Too many requests");
     rates.set(key, rate);
-    if (++rate.count > 240) throw new HttpError(429, "Too many requests");
+    if (++rate.count > limit) throw new HttpError(429, "Too many requests");
   }
   app.addHook("onRequest", async (req) => {
     // Device authentication is separate from human OIDC. Never trust arbitrary forwarded IP headers.
@@ -175,9 +176,14 @@ export async function buildApp(
     );
     if (!rows[0])
       throw new HttpError(401, "Invalid or expired device credential");
+    consumeRate(
+      `device:${rows[0].id}`,
+      req.routeOptions.url === "/v1/agent/connect" ? 1200 : 60,
+    );
     return rows[0] as { id: string; expires_at: Date };
   }
 
+  const compute = registerCompute(app, { pool, user, deviceAuth });
   app.get("/healthz", async () => ({ status: "ok" }));
   app.get("/readyz", async (_req, reply) => {
     let checks: Record<string, boolean>;
@@ -198,7 +204,8 @@ export async function buildApp(
     consent_version: CONSENT_VERSION,
     oidc_issuer: config.OIDC_ISSUER,
     oidc_client_id: "opencompute-console",
-    execution_enabled: false,
+    execution_enabled: true,
+    execution_mode: "synthetic-only",
   }));
   app.get("/v1/me", async (req) => {
     const u = await user(req);
@@ -458,17 +465,19 @@ export async function buildApp(
           }
           // Revocation and token expiry are rechecked on every message, including existing connections.
           await deviceAuth(req);
-          await recordPresence(
-            pool,
-            credential.id,
-            message.capabilities,
-            req.id,
-          );
+          if (message.type === "HELLO" || message.type === "HEARTBEAT")
+            await recordPresence(
+              pool,
+              credential.id,
+              message.capabilities,
+              req.id,
+            );
           if (!hello)
             await audit(credential.id, "DEVICE_CONNECTED", credential.id, req);
           sequence = message.sequence;
           hello = true;
           lastMessage = Date.now();
+          const control = await compute.control(credential.id, message);
           socket.send(
             JSON.stringify({
               protocol_version: 1,
@@ -477,6 +486,7 @@ export async function buildApp(
               sequence,
               trace_id: message.trace_id,
               server_time: new Date().toISOString(),
+              ...control,
             }),
           );
         } catch {

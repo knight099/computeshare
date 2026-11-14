@@ -1,4 +1,4 @@
-// OpenCompute agent: enrollment and outbound telemetry only. No workload execution.
+// OpenCompute agent: local consent and constrained built-in synthetic work only.
 package main
 
 import (
@@ -28,8 +28,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type Capabilities struct {
@@ -319,108 +317,36 @@ func enroll(ctx context.Context, gateway, dir, name string, accept bool) error {
 	fmt.Println("Device enrolled:", result.ID, "— no compute execution enabled")
 	return nil
 }
-func connect(ctx context.Context, s State) error {
+func deviceToken(ctx context.Context, s State) (string, error) {
 	var config Config
 	if err := request(ctx, s.Gateway, "/v1/config", "GET", "", nil, &config); err != nil {
-		return err
+		return "", err
 	}
 	if config.Operator != s.Operator {
-		return errors.New("operator identity mismatch")
+		return "", errors.New("operator identity mismatch")
 	}
 	var challenge struct {
 		Nonce    string `json:"nonce"`
 		Operator string `json:"operator_id"`
 	}
 	if err := request(ctx, s.Gateway, "/v1/device-auth/challenge", "POST", "", map[string]string{"device_id": s.Device}, &challenge); err != nil {
-		return err
+		return "", err
 	}
 	if challenge.Operator != s.Operator {
-		return errors.New("operator identity mismatch")
+		return "", errors.New("operator identity mismatch")
 	}
 	priv, err := base64.StdEncoding.DecodeString(s.Private)
 	if err != nil || len(priv) != ed25519.PrivateKeySize {
-		return errors.New("invalid local device key")
+		return "", errors.New("invalid local device key")
 	}
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte("opencompute-auth-v1:"+s.Operator+":"+s.Device+":"+challenge.Nonce)))
 	var token struct {
 		Access string `json:"access_token"`
 	}
 	if err = request(ctx, s.Gateway, "/v1/device-auth/token", "POST", "", map[string]string{"device_id": s.Device, "nonce": challenge.Nonce, "signature": signature}, &token); err != nil {
-		return err
+		return "", err
 	}
-	u, _ := url.Parse(s.Gateway + "/v1/agent/connect")
-	if u.Scheme == "https" {
-		u.Scheme = "wss"
-	} else {
-		u.Scheme = "ws"
-	}
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, Proxy: http.ProxyFromEnvironment}
-	ws, response, err := dialer.DialContext(ctx, u.String(), http.Header{"Authorization": {"Bearer " + token.Access}})
-	if response != nil && response.Body != nil {
-		defer response.Body.Close()
-	}
-	if err != nil {
-		return errors.New("gateway connection rejected")
-	}
-	defer ws.Close()
-	caps, err := capabilities()
-	if err != nil {
-		return err
-	}
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			ws.Close()
-		case <-done:
-		}
-	}()
-	ws.SetReadLimit(16384)
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	var sequence int64
-	send := func(kind string) error {
-		trace := randomID()
-		message := map[string]interface{}{"protocol_version": 1, "type": kind, "device_id": s.Device, "sequence": sequence, "trace_id": trace}
-		if kind == "HELLO" {
-			message["capabilities"] = caps
-		}
-		_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if err := ws.WriteJSON(message); err != nil {
-			return errors.New("gateway send failed")
-		}
-		_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
-		var ack struct {
-			Version  int    `json:"protocol_version"`
-			Type     string `json:"type"`
-			Device   string `json:"device_id"`
-			Sequence int64  `json:"sequence"`
-			Trace    string `json:"trace_id"`
-		}
-		if err := ws.ReadJSON(&ack); err != nil {
-			return errors.New("gateway acknowledgement unavailable")
-		}
-		if ack.Version != 1 || ack.Type != "ACK" || ack.Device != s.Device || ack.Sequence != sequence || ack.Trace != trace {
-			return errors.New("invalid acknowledgement")
-		}
-		sequence++
-		return nil
-	}
-	if err = send("HELLO"); err != nil {
-		return err
-	}
-	log.Println("Connected to company gateway; execution disabled")
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err = send("HEARTBEAT"); err != nil {
-				return err
-			}
-		}
-	}
+	return token.Access, nil
 }
 func wait(ctx context.Context, duration time.Duration) {
 	timer := time.NewTimer(duration)
@@ -430,7 +356,7 @@ func wait(ctx context.Context, duration time.Duration) {
 	case <-timer.C:
 	}
 }
-func run(ctx context.Context, dir string) error {
+func run(ctx context.Context, dir string, port int) error {
 	b, err := readSecret(filepath.Join(dir, "device.json"))
 	if err != nil {
 		return errors.New("device state unavailable; enroll first")
@@ -442,10 +368,21 @@ func run(ctx context.Context, dir string) error {
 	if _, err = validateGateway(state.Gateway); err != nil {
 		return err
 	}
+	manager, err := newSessionManager(dir, state)
+	if err != nil {
+		return err
+	}
+	defer manager.stopLocal("STOPPED")
+	go manager.watch(ctx)
+	closeDashboard, err := startDashboard(ctx, manager, port)
+	if err != nil {
+		return err
+	}
+	defer closeDashboard()
 	backoff := time.Second
 	for ctx.Err() == nil {
 		started := time.Now()
-		err = connect(ctx, state)
+		err = connect(ctx, state, manager)
 		if ctx.Err() != nil {
 			break
 		}
@@ -469,10 +406,17 @@ func run(ctx context.Context, dir string) error {
 }
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: opencompute-agent login|enroll|run [--state-dir PATH] [--gateway URL] [--name NAME] [--accept-consent]")
+		fmt.Fprintln(os.Stderr, "Usage: opencompute-agent login|enroll|run|stop [--state-dir PATH] [--gateway URL] [--name NAME] [--accept-consent]")
 		os.Exit(2)
 	}
+	if os.Args[1] == "internal-hash-worker" {
+		if err := hashWorker(); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	flags := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
+	port := flags.Int("dashboard-port", 8788, "loopback contributor dashboard port (0 for a random free port)")
 	gateway := flags.String("gateway", "http://localhost:8080", "company gateway origin")
 	name := flags.String("name", "linux-device", "device display name")
 	accepted := flags.Bool("accept-consent", false, "explicitly accept disclosed enrollment telemetry; no compute runs")
@@ -503,8 +447,19 @@ func main() {
 		err = login(ctx, normalized, *dir)
 	case "enroll":
 		err = enroll(ctx, normalized, *dir, *name, *accepted)
+	case "stop":
+		var session LocalSession
+		b, e := readSecret(filepath.Join(*dir, "session.json"))
+		if e != nil {
+			err = e
+		} else if e = json.Unmarshal(b, &session); e != nil {
+			err = e
+		} else {
+			session.Status = "STOPPED"
+			err = save(filepath.Join(*dir, "session.json"), session)
+		}
 	case "run":
-		err = run(ctx, *dir)
+		err = run(ctx, *dir, *port)
 	default:
 		err = errors.New("unknown command")
 	}
