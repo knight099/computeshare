@@ -1,0 +1,514 @@
+// OpenCompute agent: enrollment and outbound telemetry only. No workload execution.
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+type Capabilities struct {
+	OS       string   `json:"os"`
+	Arch     string   `json:"arch"`
+	CPU      int      `json:"cpu_cores"`
+	Memory   int64    `json:"memory_mb"`
+	Version  string   `json:"agent_version"`
+	Runtimes []string `json:"runtimes"`
+}
+type State struct {
+	Gateway  string `json:"gateway"`
+	Operator string `json:"operator_id"`
+	Device   string `json:"device_id"`
+	Private  string `json:"private_key"`
+}
+type Login struct {
+	Gateway  string `json:"gateway"`
+	Operator string `json:"operator_id"`
+	Token    string `json:"access_token"`
+	Expires  int64  `json:"expires_at"`
+}
+type Config struct {
+	Operator string `json:"operator_id"`
+	Issuer   string `json:"oidc_issuer"`
+	Consent  string `json:"consent_version"`
+}
+
+var httpClient = &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+
+func validateGateway(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", errors.New("gateway must be an origin without credentials, query or path")
+	}
+	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")) {
+		return "", errors.New("HTTPS required except on loopback for local development")
+	}
+	return strings.TrimSuffix(u.String(), "/"), nil
+}
+func readSecret(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() || st.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("state must be a regular private file (0600)")
+	}
+	return io.ReadAll(io.LimitReader(f, 65536))
+}
+func writeSecret(path string, data []byte) error {
+	if st, err := os.Lstat(path); err == nil && (!st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0) {
+		return errors.New("refusing non-regular state file")
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".state-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err = tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
+func save(path string, value interface{}) error {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writeSecret(path, b)
+}
+func request(ctx context.Context, gateway, path, method, token string, body, result interface{}) error {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, gateway+path, reader)
+	if err != nil {
+		return errors.New("invalid request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := httpClient.Do(req)
+	if err != nil {
+		return errors.New("company endpoint unavailable")
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("company endpoint returned HTTP %d", response.StatusCode)
+	}
+	if result == nil {
+		return nil
+	}
+	return json.NewDecoder(io.LimitReader(response.Body, 65536)).Decode(result)
+}
+func randomID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	b[6] = (b[6] & 15) | 64
+	b[8] = (b[8] & 63) | 128
+	h := hex.EncodeToString(b)
+	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
+}
+func randomString() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+func capabilities() (Capabilities, error) {
+	if runtime.GOOS != "linux" {
+		return Capabilities{}, errors.New("this release supports Linux enrollment only")
+	}
+	b, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return Capabilities{}, errors.New("cannot detect memory")
+	}
+	var memory int64
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[0] == "MemTotal:" {
+			memory, _ = strconv.ParseInt(f[1], 10, 64)
+			memory /= 1024
+		}
+	}
+	if memory < 1 {
+		return Capabilities{}, errors.New("invalid memory capability")
+	}
+	return Capabilities{OS: runtime.GOOS, Arch: runtime.GOARCH, CPU: runtime.NumCPU(), Memory: memory, Version: "0.1.0", Runtimes: []string{}}, nil
+}
+func login(ctx context.Context, gateway, dir string) error {
+	var config Config
+	if err := request(ctx, gateway, "/v1/config", "GET", "", nil, &config); err != nil {
+		return err
+	}
+	issuer, err := url.Parse(config.Issuer)
+	if err != nil || issuer.User != nil || issuer.RawQuery != "" {
+		return errors.New("invalid identity issuer")
+	}
+	if _, err = validateGateway(issuer.Scheme + "://" + issuer.Host); err != nil {
+		return errors.New("unsafe identity issuer")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:8787")
+	if err != nil {
+		return errors.New("loopback login port 8787 unavailable")
+	}
+	state, verifier := randomString(), randomString()
+	hash := sha256.Sum256([]byte(verifier))
+	redirect := "http://127.0.0.1:8787/callback"
+	authURL := config.Issuer + "/protocol/openid-connect/auth?" + url.Values{"client_id": {"opencompute-agent"}, "redirect_uri": {redirect}, "response_type": {"code"}, "scope": {"openid"}, "state": {state}, "code_challenge": {base64.RawURLEncoding.EncodeToString(hash[:])}, "code_challenge_method": {"S256"}}.Encode()
+	codes := make(chan string, 1)
+	server := &http.Server{ReadHeaderTimeout: 5 * time.Second}
+	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		if r.Method != "GET" || r.URL.Path != "/callback" || r.URL.Query().Get("state") != state || r.URL.Query().Get("code") == "" {
+			http.Error(w, "Invalid sign-in response", 400)
+			return
+		}
+		select {
+		case codes <- r.URL.Query().Get("code"):
+			fmt.Fprint(w, "Sign-in received. You can close this window.")
+		default:
+			http.Error(w, "Already received", 409)
+		}
+	})
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+	fmt.Println("Open this company sign-in URL in your system browser:", authURL)
+	if path, err := exec.LookPath("xdg-open"); err == nil {
+		cmd := exec.CommandContext(ctx, path, authURL)
+		_ = cmd.Start()
+		go func() { _ = cmd.Wait() }()
+	}
+	var code string
+	select {
+	case code = <-codes:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	form := url.Values{"grant_type": {"authorization_code"}, "client_id": {"opencompute-agent"}, "redirect_uri": {redirect}, "code": {code}, "code_verifier": {verifier}}
+	req, err := http.NewRequestWithContext(ctx, "POST", config.Issuer+"/protocol/openid-connect/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := httpClient.Do(req)
+	if err != nil {
+		return errors.New("identity provider unavailable")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		return errors.New("identity provider rejected sign-in")
+	}
+	var tokens struct {
+		Token   string `json:"access_token"`
+		Expires int64  `json:"expires_in"`
+	}
+	if err = json.NewDecoder(io.LimitReader(response.Body, 65536)).Decode(&tokens); err != nil {
+		return err
+	}
+	if tokens.Token == "" || tokens.Expires <= 0 {
+		return errors.New("invalid identity response")
+	}
+	var me map[string]interface{}
+	if err = request(ctx, gateway, "/v1/me", "GET", tokens.Token, nil, &me); err != nil {
+		return err
+	}
+	if err = save(filepath.Join(dir, "login.json"), Login{gateway, config.Operator, tokens.Token, time.Now().Unix() + tokens.Expires}); err != nil {
+		return err
+	}
+	fmt.Println("Signed in. Enrollment requires explicit --accept-consent.")
+	return nil
+}
+func enroll(ctx context.Context, gateway, dir, name string, accept bool) error {
+	if !accept {
+		return errors.New("review the enrollment disclosure in the operator guide, then explicitly pass --accept-consent; registration shares OS, CPU, RAM and connectivity, and does not execute jobs")
+	}
+	path := filepath.Join(dir, "device.json")
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		return errors.New("device state already exists; refusing to replace its operator binding")
+	}
+	b, err := readSecret(filepath.Join(dir, "login.json"))
+	if err != nil {
+		return errors.New("run login first")
+	}
+	var credentials Login
+	if err = json.Unmarshal(b, &credentials); err != nil {
+		return err
+	}
+	if credentials.Gateway != gateway || credentials.Expires <= time.Now().Unix() {
+		return errors.New("login expired or belongs to another gateway")
+	}
+	var config Config
+	if err = request(ctx, gateway, "/v1/config", "GET", "", nil, &config); err != nil {
+		return err
+	}
+	if config.Operator != credentials.Operator {
+		return errors.New("operator identity changed")
+	}
+	caps, err := capabilities()
+	if err != nil {
+		return err
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	key := base64.StdEncoding.EncodeToString(pub)
+	if err = request(ctx, gateway, "/v1/consent", "POST", credentials.Token, map[string]interface{}{"version": config.Consent, "accepted": true}, nil); err != nil {
+		return err
+	}
+	proof := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte("opencompute-enroll-v1:"+config.Operator+":"+key)))
+	var result struct {
+		ID       string `json:"id"`
+		Operator string `json:"operator_id"`
+	}
+	if err = request(ctx, gateway, "/v1/devices", "POST", credentials.Token, map[string]interface{}{"name": name, "public_key": key, "signature": proof, "capabilities": caps}, &result); err != nil {
+		return err
+	}
+	if result.ID == "" || result.Operator != config.Operator {
+		return errors.New("invalid enrollment response")
+	}
+	if err = save(path, State{gateway, config.Operator, result.ID, base64.StdEncoding.EncodeToString(priv)}); err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(dir, "login.json"))
+	fmt.Println("Device enrolled:", result.ID, "— no compute execution enabled")
+	return nil
+}
+func connect(ctx context.Context, s State) error {
+	var config Config
+	if err := request(ctx, s.Gateway, "/v1/config", "GET", "", nil, &config); err != nil {
+		return err
+	}
+	if config.Operator != s.Operator {
+		return errors.New("operator identity mismatch")
+	}
+	var challenge struct {
+		Nonce    string `json:"nonce"`
+		Operator string `json:"operator_id"`
+	}
+	if err := request(ctx, s.Gateway, "/v1/device-auth/challenge", "POST", "", map[string]string{"device_id": s.Device}, &challenge); err != nil {
+		return err
+	}
+	if challenge.Operator != s.Operator {
+		return errors.New("operator identity mismatch")
+	}
+	priv, err := base64.StdEncoding.DecodeString(s.Private)
+	if err != nil || len(priv) != ed25519.PrivateKeySize {
+		return errors.New("invalid local device key")
+	}
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte("opencompute-auth-v1:"+s.Operator+":"+s.Device+":"+challenge.Nonce)))
+	var token struct {
+		Access string `json:"access_token"`
+	}
+	if err = request(ctx, s.Gateway, "/v1/device-auth/token", "POST", "", map[string]string{"device_id": s.Device, "nonce": challenge.Nonce, "signature": signature}, &token); err != nil {
+		return err
+	}
+	u, _ := url.Parse(s.Gateway + "/v1/agent/connect")
+	if u.Scheme == "https" {
+		u.Scheme = "wss"
+	} else {
+		u.Scheme = "ws"
+	}
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, Proxy: http.ProxyFromEnvironment}
+	ws, response, err := dialer.DialContext(ctx, u.String(), http.Header{"Authorization": {"Bearer " + token.Access}})
+	if response != nil && response.Body != nil {
+		defer response.Body.Close()
+	}
+	if err != nil {
+		return errors.New("gateway connection rejected")
+	}
+	defer ws.Close()
+	caps, err := capabilities()
+	if err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			ws.Close()
+		case <-done:
+		}
+	}()
+	ws.SetReadLimit(16384)
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	var sequence int64
+	send := func(kind string) error {
+		trace := randomID()
+		message := map[string]interface{}{"protocol_version": 1, "type": kind, "device_id": s.Device, "sequence": sequence, "trace_id": trace}
+		if kind == "HELLO" {
+			message["capabilities"] = caps
+		}
+		_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := ws.WriteJSON(message); err != nil {
+			return errors.New("gateway send failed")
+		}
+		_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
+		var ack struct {
+			Version  int    `json:"protocol_version"`
+			Type     string `json:"type"`
+			Device   string `json:"device_id"`
+			Sequence int64  `json:"sequence"`
+			Trace    string `json:"trace_id"`
+		}
+		if err := ws.ReadJSON(&ack); err != nil {
+			return errors.New("gateway acknowledgement unavailable")
+		}
+		if ack.Version != 1 || ack.Type != "ACK" || ack.Device != s.Device || ack.Sequence != sequence || ack.Trace != trace {
+			return errors.New("invalid acknowledgement")
+		}
+		sequence++
+		return nil
+	}
+	if err = send("HELLO"); err != nil {
+		return err
+	}
+	log.Println("Connected to company gateway; execution disabled")
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err = send("HEARTBEAT"); err != nil {
+				return err
+			}
+		}
+	}
+}
+func wait(ctx context.Context, duration time.Duration) {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+}
+func run(ctx context.Context, dir string) error {
+	b, err := readSecret(filepath.Join(dir, "device.json"))
+	if err != nil {
+		return errors.New("device state unavailable; enroll first")
+	}
+	var state State
+	if err = json.Unmarshal(b, &state); err != nil {
+		return err
+	}
+	if _, err = validateGateway(state.Gateway); err != nil {
+		return err
+	}
+	backoff := time.Second
+	for ctx.Err() == nil {
+		started := time.Now()
+		err = connect(ctx, state)
+		if ctx.Err() != nil {
+			break
+		}
+		if err != nil {
+			log.Println(err)
+		}
+		if time.Since(started) > time.Minute {
+			backoff = time.Second
+		}
+		jitter, _ := rand.Int(rand.Reader, big.NewInt(int64(backoff/2)+1))
+		wait(ctx, backoff+time.Duration(jitter.Int64()))
+		if backoff < 30*time.Second {
+			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+		}
+	}
+	log.Println("Agent stopped locally")
+	return nil
+}
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: opencompute-agent login|enroll|run [--state-dir PATH] [--gateway URL] [--name NAME] [--accept-consent]")
+		os.Exit(2)
+	}
+	flags := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
+	gateway := flags.String("gateway", "http://localhost:8080", "company gateway origin")
+	name := flags.String("name", "linux-device", "device display name")
+	accepted := flags.Bool("accept-consent", false, "explicitly accept disclosed enrollment telemetry; no compute runs")
+	home, err := os.UserConfigDir()
+	if err != nil {
+		log.Fatal("Cannot locate user configuration directory")
+	}
+	dir := flags.String("state-dir", filepath.Join(home, "opencompute"), "private local state directory")
+	_ = flags.Parse(os.Args[2:])
+	if err = os.MkdirAll(*dir, 0700); err != nil {
+		log.Fatal("Cannot create local state directory")
+	}
+	st, err := os.Lstat(*dir)
+	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm()&0077 != 0 {
+		log.Fatal("State directory must be private (0700) and not a symlink")
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	normalized, err := validateGateway(*gateway)
+	if err != nil {
+		log.Fatal(err)
+	}
+	switch os.Args[1] {
+	case "login":
+		var timeout context.CancelFunc
+		ctx, timeout = context.WithTimeout(ctx, 3*time.Minute)
+		defer timeout()
+		err = login(ctx, normalized, *dir)
+	case "enroll":
+		err = enroll(ctx, normalized, *dir, *name, *accepted)
+	case "run":
+		err = run(ctx, *dir)
+	default:
+		err = errors.New("unknown command")
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+}

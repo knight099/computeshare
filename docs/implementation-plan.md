@@ -1,0 +1,96 @@
+# Full staged implementation plan
+
+Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). This checklist records delivery, not promises of completed features. Each milestone's acceptance tests must pass before advancing. M5 arbitrary-runtime enablement additionally requires independent security review.
+
+## M0 — Foundation
+
+- [x] Strict TypeScript workspace, Go module, pinned dependency lockfile, lint/format/typecheck/unit-test commands.
+- [x] Modular Fastify API, distinct health/readiness, validated configuration with redacted failures.
+- [x] Transactional repeatable migrations with deployment identity binding.
+- [x] Compose definitions for database, Redis, durable NATS, S3, local OIDC, API and console.
+- [x] Initial ADR-001–010, threat model, security/contribution/license files, setup and API documentation.
+- [x] CI definitions for source checks, integration tests, agent tests, builds, Compose smoke and enrollment E2E.
+- [ ] Gate: clean-clone `make dev`, full Compose acceptance and CI success. See verification evidence for local checks and blockers.
+
+## M1 — Identity and device registry
+
+- [x] OIDC issuer/audience/expiry/signature verification and operator/contributor role boundaries.
+- [x] PKCE browser sign-in for console and Linux CLI; explicit versioned enrollment consent.
+- [x] Ed25519 registration proof, owner-scoped device APIs, unique device keys.
+- [x] Operator-bound single-use challenge exchange, hashed short-lived device credentials.
+- [x] Outbound gateway, capability inventory, 15-second heartbeat, replay/identity validation, reconnect backoff, revocation and audit records.
+- [x] Operator device-list UI and contributor owner-scoped enrollment/device views.
+- [x] Database-backed security tests for two-user isolation, consent, revocation, protocol and challenge replay.
+- [ ] Gate: complete browser/CLI/provider/registry E2E and reconnect/revocation acceptance against the Compose stack.
+- [ ] Follow-up: scheduled credential/challenge retention, capability-change snapshots, scoped support/admin revocation workflow, documented key rotation, proxy/IPv6 network matrix.
+
+## M2 — Contributor sessions and safe compute
+
+- [ ] Availability sessions with 1/2/4/6/8/12-hour presets, immutable policy and consent snapshots; no automatic renewal.
+- [ ] Local offline expiry and Stop, idle detection abstraction, sleep/reboot/network/power transitions.
+- [ ] Enforced CPU/RAM/disk/network caps; unsupported thermal/power/GPU controls prevent admission.
+- [ ] Go scheduler: deterministic eligibility, remaining-time safety margin, atomic capacity reservation, offer/accept/reject, leases and epochs.
+- [ ] Allowlisted bounded CPU/hash/public-data transformations only; no scripts, arbitrary binaries, shell commands, images or GPU access.
+- [ ] Versioned job API, SDK, artifact integrity and result interfaces; transactional outbox into durable events.
+- [ ] Contributor Home/settings/jobs/activity/diagnostics/privacy screens, resource telemetry and redacted job history.
+- [ ] Gate: six-hour session, successful synthetic work, Stop during partition, offline expiry, caps, NAT baseline and 100-job E2E.
+
+## M3 — Reliability, verification and simulated credits
+
+- [ ] Durable job/attempt transitions, bounded retry/backoff, dead-letter state and lease fencing.
+- [ ] Reconnect reconciliation and immutable artifact/result association; deterministic server-owned verification vectors.
+- [ ] Evidence-based usage records, availability/allocation/execution/verified-unit separation.
+- [ ] Versioned fixed-point credit policies, balanced immutable journals, settlement uniqueness, pending/confirmed/reversal history.
+- [ ] Contributor statements and credit screens; operator policy/export and audited dual-approved adjustments.
+- [ ] Gate: worker death and reassignment, delayed/stale events, duplicates with zero duplicate settlements, invalid/forged usage rejection, ledger reconciliation, complete audit trail.
+
+## M4 — White-label products and distribution
+
+- [ ] Operator configuration/theme/logo/support/legal links/credit naming and approved-workload policy.
+- [ ] Console overview/jobs/workload policies/identity/access/credits/security administration, complete RBAC including submitter and auditor.
+- [ ] Contributor Tauri shell, separate installer artifacts and platform capability gating.
+- [ ] Operator-bound signed configuration/installers/manifests, update verification, release revocation, downgrade protection and rollback.
+- [ ] OS-backed credential storage, rotated device identities, company-specific signing workflow, SBOM/dependency scans and reproducibility guidance.
+- [ ] Independent Company A/B examples, account/device deletion and retention guides, download/checksum distribution.
+- [ ] Gate: separate branded deployments with distinct identities, data, keys and credit policies; tampering/retargeting rejected; no central service.
+
+## M5 — Reviewed runtime and GPU research
+
+- [ ] Linux VM/microVM runtime, no host filesystem or credentials, resource/disk limits, denied-by-default egress.
+- [ ] Artifact scanning/signatures, hostile workload tests, sandbox escape threat model and independent security review.
+- [ ] Energy/thermal controls and verified host/driver/runtime compatibility matrix.
+- [ ] GPU isolation prototypes; only reviewed supported entries can enable public jobs.
+- [ ] Gate: documented review evidence and hostile-workload tests; failed or absent review keeps arbitrary/GPU execution disabled.
+
+## M6 — Optional P2P and production operations
+
+- [ ] Explicitly opt-in P2P for authorized public immutable artifacts, peer identity, content-addressed cache, corruption rejection and HTTPS/relay fallback.
+- [ ] Transfer/relay economics benchmarks; no sensitive payloads distributed by default.
+- [ ] HA gateway/scheduler operations, shared presence/revocation, fleet rate limits, Helm/Terraform and HTTPS deployment examples.
+- [ ] OpenTelemetry, Prometheus/Grafana and structured log dashboards; retention, redacted diagnostic exports, alerts and incident response.
+- [ ] Migration/upgrade/rollback procedures, tested database/object backup and restore, release/API compatibility policies.
+- [ ] Gate: 10-node/1,000-job test with 30% interruptions, conditional ≥99% completion, zero duplicate settlements, latency/recovery/bandwidth/cost report, restored state verified.
+
+## Requirements coverage
+
+| Master sections                                                  | Owning stages                                |
+| ---------------------------------------------------------------- | -------------------------------------------- |
+| 0–1: product boundaries and independent company ownership        | All; ADR-001                                 |
+| 2: onboarding, availability and all product screens              | M1–M4                                        |
+| 3–4: architecture, outbound networking, P2P and failure handling | M0–M3, M6                                    |
+| 5–6: scheduling, recovery, isolation, supply chain               | M2–M5                                        |
+| 7: metering, verification and credits                            | M3                                           |
+| 8–10: identity, white-labeling, APIs, protocol, schema           | M0–M4                                        |
+| 11–12: monorepo and stage acceptance                             | All                                          |
+| 13–15: tests, observability, self-hosting and operations         | All; scale/HA in M6                          |
+| 16–18: governance, compatibility, risks and ADRs                 | M0, M4–M6; review gates retained             |
+| 19: first autonomous delivery                                    | M0 / initial M1                              |
+| 20: two-company final demonstration                              | M4 synthetic baseline; M5/M6 gated additions |
+
+## Decisions and progress ledger
+
+- Approved approach: full staged program; implement sequentially and never represent future stages as complete.
+- Ruling: resolve the section 6.2/M5 timing conflict in favor of the milestone list. M3 remains synthetic-only; arbitrary-runtime review occurs in M5. Cost: isolated real workloads arrive later.
+- Ruling: use maintained SeaweedFS S3 for local storage after official MinIO references failed. Cost: different development storage administration; S3 compatibility must be tested, and upstream licenses remain separate.
+- Ruling: Linux enrollment only in the initial agent, with no declared executable runtime. Cost: Windows/macOS enrollment waits for tested adapters.
+- Review focus: cross-user access, revoked/expired credentials, replayed proofs/messages, state-file exposure, failure of a dependency while liveness stays healthy.

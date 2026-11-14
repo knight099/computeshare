@@ -1,0 +1,535 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenCompute enrollment API",
+    "version": "0.1.0",
+    "description": "M0/M1 skeleton. Execution is disabled. Device and human bearer tokens are different credential classes; see docs/api.md."
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "/healthz",
+        "operationId": "get_healthz",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "/readyz",
+        "operationId": "get_readyz",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/config": {
+      "get": {
+        "summary": "/v1/config",
+        "operationId": "get_v1_config",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "summary": "/v1/me",
+        "operationId": "get_v1_me",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/consent": {
+      "post": {
+        "summary": "/v1/consent",
+        "operationId": "post_v1_consent",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["version", "accepted"],
+                "properties": {
+                  "version": {
+                    "const": "2026-11-14"
+                  },
+                  "accepted": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices": {
+      "get": {
+        "summary": "/v1/devices",
+        "operationId": "get_v1_devices",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "/v1/devices",
+        "operationId": "post_v1_devices",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Enrollment"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/devices/{id}": {
+      "get": {
+        "summary": "/v1/devices/{id}",
+        "operationId": "get_v1_devices_id",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/devices/{id}/revoke": {
+      "post": {
+        "summary": "/v1/devices/{id}/revoke",
+        "operationId": "post_v1_devices_id_revoke",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/device-auth/challenge": {
+      "post": {
+        "summary": "/v1/device-auth/challenge",
+        "operationId": "post_v1_device_auth_challenge",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["device_id"],
+                "properties": {
+                  "device_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/device-auth/token": {
+      "post": {
+        "summary": "/v1/device-auth/token",
+        "operationId": "post_v1_device_auth_token",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["device_id", "nonce", "signature"],
+                "properties": {
+                  "device_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "nonce": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "signature": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agent/connect": {
+      "get": {
+        "summary": "/v1/agent/connect",
+        "operationId": "get_v1_agent_connect",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/devices": {
+      "get": {
+        "summary": "/v1/operator/devices",
+        "operationId": "get_v1_operator_devices",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/audit-events": {
+      "get": {
+        "summary": "/v1/operator/audit-events",
+        "operationId": "get_v1_operator_audit_events",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success; see docs/api.md for field semantics"
+          },
+          "default": {
+            "description": "Request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error", "trace_id"],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          }
+        }
+      },
+      "Capabilities": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "os",
+          "arch",
+          "cpu_cores",
+          "memory_mb",
+          "agent_version",
+          "runtimes"
+        ],
+        "properties": {
+          "os": {
+            "enum": ["linux", "windows", "darwin"]
+          },
+          "arch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "memory_mb": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16777216
+          },
+          "agent_version": {
+            "const": "0.1.0"
+          },
+          "runtimes": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "enum": ["synthetic-hash-v1"]
+            }
+          }
+        }
+      },
+      "Enrollment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "public_key", "signature", "capabilities"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "public_key": {
+            "type": "string",
+            "description": "Base64 raw 32-byte Ed25519 key"
+          },
+          "signature": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities"
+          }
+        }
+      }
+    }
+  }
+}
