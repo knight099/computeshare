@@ -1,6 +1,6 @@
 # Verification evidence — identity and synthetic compute preview
 
-Date: 2026-11-17. Latest verified implementation: [usage commit 8ca23b5](https://github.com/knight099/computeshare/actions/runs/44181102875), with source and complete Compose acceptance passing. [Database-outage recovery 3d4a762](https://github.com/knight099/computeshare/actions/runs/44180788407) also passed. Earlier M1 and CPU-preview gates remain linked in the implementation history.
+Date: 2026-11-17. Latest verified implementation: [bounded retries commit 4a8370b](https://github.com/knight099/computeshare/actions/runs/44182487190), with source and complete Compose acceptance passing. [Database-outage recovery 3d4a762](https://github.com/knight099/computeshare/actions/runs/44180788407) also passed. Earlier M1 and CPU-preview gates remain linked in the implementation history.
 
 | Check                                    | Observed result                                                                                                                                                     |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -30,7 +30,7 @@ M1 additions cover atomic capability-change history without unchanged-heartbeat 
 
 ## Remaining gates and review minors
 
-This is the initial M2 CPU-only vertical slice, not the complete product. Artifacts, broader power/thermal/idle policies and full contributor diagnostics remain M2 follow-ups. Standalone scheduling and a workspace SDK are implemented. Technical usage is implemented; bounded opt-in retries have passed local integration checks and await their full-stack gate. Signing, distribution, reviewed VM/GPU execution and P2P remain later stages. Payments, credits and business management are excluded by the current scope.
+This is the initial M2 CPU-only vertical slice, not the complete product. Artifacts, broader power/thermal/idle policies and full contributor diagnostics remain M2 follow-ups. Standalone scheduling and a workspace SDK are implemented. Technical usage is implemented; bounded opt-in retries passed full-stack CI 44182487190. Signing, distribution, reviewed VM/GPU execution and P2P remain later stages. Payments, credits and business management are excluded by the current scope.
 
 The former parent-death, chronological-history and synchronous-verification review minors are addressed in the current increment. Local checks on 2026-11-17 passed strict typecheck/lint, eight Node unit tests, 21 real PostgreSQL integration tests (including real JetStream acknowledgement replay), and Go race tests including SIGKILL of a real supervising process. The outbox test injects a broker publication failure and a database acknowledgement failure, then checks retry against real JetStream; it does not claim a production network outage soak. New full-stack CI acceptance also checks cleanup of real empty owned cgroups while preserving unknown groups. Both source and Compose acceptance passed in [CI run 44175864569](https://github.com/knight099/computeshare/actions/runs/44175864569), including the new real cgroup cleanup check, 100 constrained jobs and offline Stop.
 
@@ -48,4 +48,4 @@ Scheduler/SDK implementation 8db2d16 passed full CI 44179371785. A subsequent bo
 
 Usage schema 5 passed independent review, 25 integration tests, and full CI 44181102875 with 100 unique records, validated outputs and positive bounded cgroup metrics explicitly marked untrusted. Rejected or plausible host claims never become attestation or financial balances. Logical configured iterations are not proof of physical CPU time.
 
-Recovery schema 6 has local coverage for lease loss, attempt-budget exhaustion, delayed eligibility, local Stop/new consent, higher epochs, stale-result rejection, worker failure retry, terminal invalid output and terminal company cancellation. No Critical/Important review finding remains. Full-stack evidence for this last increment will be recorded after its run completes.
+Recovery schema 6 has local coverage for lease loss, attempt-budget exhaustion, delayed eligibility, local Stop/new consent, higher epochs, stale-result rejection, worker failure retry, terminal invalid output and terminal company cancellation. No Critical/Important review finding remains. Full-stack source and Compose acceptance passed in CI 44182487190.

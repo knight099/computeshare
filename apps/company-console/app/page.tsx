@@ -465,9 +465,8 @@ export default function Home() {
                     <p>
                       <strong>Explicit sharing consent is required.</strong>{" "}
                       This preview runs only bounded public CPU hash jobs. Start
-                      and Stop live in the agent’s local contributor dashboard;
-                      credits are unavailable. Registering a device does not
-                      start work.
+                      and Stop live in the agent’s local contributor dashboard.
+                      Registering a device does not start work.
                     </p>
                   </div>
                 </>
@@ -530,7 +529,7 @@ export default function Home() {
                         The agent shares OS, architecture, CPU count, memory
                         capacity, agent version, and connectivity with this
                         operator. Execution requires separate local sharing
-                        consent. Availability is not billable usage.
+                        consent. Availability alone is not completed compute.
                         Participation is voluntary; stop the agent locally at
                         any time.
                       </p>
