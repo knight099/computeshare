@@ -890,6 +890,41 @@ test(
   },
 );
 test("revocation disconnects active agent and rejects fresh authentication", async () => {
+  const session = (
+    await app.inject({
+      method: "POST",
+      url: "/v1/availability-sessions",
+      headers: auth(alice),
+      payload: {
+        device_id: device,
+        duration_seconds: 21600,
+        policy: {
+          cpu_percent: 25,
+          memory_mb: 128,
+          gpu_enabled: false,
+          idle_only: false,
+        },
+        consent_version: "sharing-v1",
+        accepted: true,
+      },
+    })
+  ).json();
+  const job = await new OpenComputeClient(
+    base,
+    () => operator,
+  ).submitSyntheticJob({
+    idempotency_key: "revoke-running",
+    seed: "public",
+    iterations: 2,
+    max_attempts: 2,
+  });
+  await pool.query("UPDATE jobs SET state='RUNNING' WHERE id=$1", [job.id]);
+  const attempt = (
+    await pool.query(
+      "INSERT INTO job_attempts(job_id,device_id,session_id,epoch,state,lease_expires_at,started_at) VALUES($1,$2,$3,1,'RUNNING',now()+interval '30 seconds',now()) RETURNING id",
+      [job.id, device, session.id],
+    )
+  ).rows[0].id;
   const socket = await connect(await credential());
   const acknowledged = once(socket, "message");
   socket.send(JSON.stringify(message()));
@@ -906,6 +941,30 @@ test("revocation disconnects active agent and rejects fresh authentication", asy
     200,
   );
   assert.equal((await closed)[0], 1008);
+  assert.equal(
+    (
+      await pool.query("SELECT status FROM availability_sessions WHERE id=$1", [
+        session.id,
+      ])
+    ).rows[0].status,
+    "STOPPED",
+  );
+  assert.equal(
+    (await pool.query("SELECT state FROM job_attempts WHERE id=$1", [attempt]))
+      .rows[0].state,
+    "CANCELED",
+  );
+  assert.equal(
+    (await pool.query("SELECT state FROM jobs WHERE id=$1", [job.id])).rows[0]
+      .state,
+    "QUEUED",
+  );
+  assert.equal(
+    (await pool.query("SELECT * FROM usage_records WHERE job_id=$1", [job.id]))
+      .rowCount,
+    0,
+  );
+
   assert.equal(
     (
       await app.inject({

@@ -11,6 +11,7 @@ import {
 } from "../../../packages/protocol/src/index.ts";
 import { HttpError, oidcVerifier, requireRole } from "./auth.ts";
 import { recordPresence } from "./presence.ts";
+import { lockCompute } from "./compute-maintenance.ts";
 import { registerScheduler } from "./scheduling.ts";
 import { registerCompute } from "./compute.ts";
 
@@ -307,6 +308,7 @@ export async function buildApp(
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await lockCompute(client);
       const { rowCount } = await client.query(
         "UPDATE devices SET revoked_at=COALESCE(revoked_at,now()),version=version+1 WHERE id=$1 AND owner_id=$2 RETURNING id",
         [id, u.id],
@@ -315,6 +317,7 @@ export async function buildApp(
       await client.query("DELETE FROM device_credentials WHERE device_id=$1", [
         id,
       ]);
+      await compute.stopDeviceSessions(client, id);
       await audit(u.id, "DEVICE_REVOKED", id, req, client);
       await client.query("COMMIT");
     } catch (e) {

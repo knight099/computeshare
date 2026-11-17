@@ -350,7 +350,11 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       await c.query("BEGIN");
       await lockCompute(c);
       // Serialize scheduling and session Stop using the same device lock order.
-      await c.query("SELECT id FROM devices WHERE id=$1 FOR UPDATE", [device]);
+      const liveDevice = await c.query(
+        "SELECT id FROM devices WHERE id=$1 AND revoked_at IS NULL FOR UPDATE",
+        [device],
+      );
+      if (!liveDevice.rowCount) throw new HttpError(401, "Device revoked");
       const expired = await c.query(
         "SELECT id FROM availability_sessions WHERE device_id=$1 AND status='ACTIVE' AND expires_at<=clock_timestamp()",
         [device],
@@ -467,5 +471,12 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       c.release();
     }
   }
-  return { control };
+  async function stopDeviceSessions(c: pg.PoolClient, device: string) {
+    const sessions = await c.query(
+      "SELECT id FROM availability_sessions WHERE device_id=$1 AND status='ACTIVE'",
+      [device],
+    );
+    for (const session of sessions.rows) await stop(c, session.id, device);
+  }
+  return { control, stopDeviceSessions };
 }
