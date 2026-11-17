@@ -1,3 +1,4 @@
+import { transitionFailedJob } from "./recovery.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type pg from "pg";
 import { recordUsage, registerUsage } from "./usage.ts";
@@ -43,6 +44,7 @@ const jobSchema = z
       .max(64)
       .regex(/^[a-zA-Z0-9 _.-]+$/),
     iterations: z.number().int().min(1).max(1000000),
+    max_attempts: z.number().int().min(1).max(3).default(1),
     timeout_seconds: z.number().int().min(1).max(30).default(10),
   })
   .strict();
@@ -84,13 +86,17 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
     );
     if (s.rowCount) {
       const attempts = await c.query(
-        "UPDATE job_attempts SET state='CANCELED',finished_at=now() WHERE session_id=$1 AND state IN ('OFFERED','ACCEPTED','RUNNING') RETURNING id,job_id",
+        "UPDATE job_attempts SET state='CANCELED',finished_at=now() WHERE session_id=$1 AND state IN ('OFFERED','ACCEPTED','RUNNING') RETURNING id,job_id,epoch",
         [id],
       );
       for (const a of attempts.rows) {
-        await c.query("UPDATE jobs SET state='CANCELED' WHERE id=$1", [
+        await transitionFailedJob(
+          c,
           a.job_id,
-        ]);
+          a.epoch,
+          "CANCELED",
+          `session:${id}`,
+        );
         await event(c, a.job_id, a.id, "CANCELED", `session:${id}`);
       }
       await c.query(
@@ -208,7 +214,8 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       if (
         known.payload.seed !== b.seed ||
         known.payload.iterations !== b.iterations ||
-        known.timeout_seconds !== b.timeout_seconds
+        known.timeout_seconds !== b.timeout_seconds ||
+        known.max_attempts !== b.max_attempts
       )
         throw new HttpError(
           409,
@@ -222,7 +229,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       await c.query("BEGIN");
       await lockCompute(c);
       let { rows } = await c.query(
-        "INSERT INTO jobs(submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state,expected_hash) VALUES($1,$2,$3,$4,$5,'QUEUED',$6) ON CONFLICT(submitter_id,idempotency_key) DO NOTHING RETURNING *",
+        "INSERT INTO jobs(submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state,expected_hash,max_attempts) VALUES($1,$2,$3,$4,$5,'QUEUED',$6,$7) ON CONFLICT(submitter_id,idempotency_key) DO NOTHING RETURNING *",
         [
           u.id,
           b.idempotency_key,
@@ -230,6 +237,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
           payload,
           b.timeout_seconds,
           expected,
+          b.max_attempts,
         ],
       );
       const created = Boolean(rows.length);
@@ -243,7 +251,8 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
         if (
           rows[0].payload.seed !== b.seed ||
           rows[0].payload.iterations !== b.iterations ||
-          rows[0].timeout_seconds !== b.timeout_seconds
+          rows[0].timeout_seconds !== b.timeout_seconds ||
+          rows[0].max_attempts !== b.max_attempts
         )
           throw new HttpError(
             409,
@@ -348,14 +357,11 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       );
       for (const s of expired.rows) await stop(c, s.id, device, "EXPIRED");
       const lost = await c.query(
-        "UPDATE job_attempts SET state='LOST',finished_at=now() WHERE device_id=$1 AND lease_expires_at<=clock_timestamp() AND state IN ('OFFERED','ACCEPTED','RUNNING') RETURNING job_id,id",
+        "UPDATE job_attempts SET state='LOST',finished_at=now() WHERE device_id=$1 AND lease_expires_at<=clock_timestamp() AND state IN ('OFFERED','ACCEPTED','RUNNING') RETURNING job_id,id,epoch",
         [device],
       );
       for (const a of lost.rows) {
-        await c.query(
-          "UPDATE jobs SET state='FAILED' WHERE id=$1 AND state='RUNNING'",
-          [a.job_id],
-        );
+        await transitionFailedJob(c, a.job_id, a.epoch, "FAILED", m.trace_id);
         await event(c, a.job_id, a.id, "LOST", m.trace_id);
       }
       if (m.session && m.session.status !== "ACTIVE")
@@ -392,19 +398,23 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
               [a.id, next, m.attempt.result ?? null],
             );
             await event(c, a.job_id, a.id, next, m.trace_id);
-            if (["VERIFIED", "FAILED"].includes(next))
-              response.job_state = next === "VERIFIED" ? "SUCCEEDED" : "FAILED";
-            if (["VERIFIED", "FAILED"].includes(next))
+            if (next === "VERIFIED") {
               await c.query(
-                "UPDATE jobs SET state=$2,result_hash=$3 WHERE id=$1",
-                [
-                  a.job_id,
-                  next === "VERIFIED" ? "SUCCEEDED" : "FAILED",
-                  next === "VERIFIED" ? m.attempt.result : null,
-                ],
+                "UPDATE jobs SET state='SUCCEEDED',result_hash=$2 WHERE id=$1",
+                [a.job_id, m.attempt.result],
               );
-            if (next === "VERIFIED")
               await recordUsage(c, a.id, m.attempt.usage);
+              response.job_state = "SUCCEEDED";
+            } else if (next === "FAILED") {
+              response.job_state = await transitionFailedJob(
+                c,
+                a.job_id,
+                a.epoch,
+                "FAILED",
+                m.trace_id,
+                m.type === "JOB_FAIL",
+              );
+            }
           }
         }
       }
@@ -437,7 +447,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
         if (s && !busy && !auth.externalScheduler()) {
           const job = (
             await c.query(
-              "SELECT * FROM jobs WHERE state='QUEUED' AND timeout_seconds+5<extract(epoch FROM ($1::timestamptz-now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
+              "SELECT * FROM jobs WHERE state='QUEUED' AND next_eligible_at<=clock_timestamp() AND timeout_seconds+5<extract(epoch FROM ($1::timestamptz-now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
               [s.expires_at],
             )
           ).rows[0];

@@ -10,6 +10,7 @@ export type JobSummary = {
 };
 export type Job = JobSummary & {
   timeout_seconds: number;
+  max_attempts: number;
   payload: { seed: string; iterations: number };
   attempts?: {
     id: string;
@@ -22,6 +23,7 @@ export type Job = JobSummary & {
 export type JobPage = { jobs: JobSummary[]; next_cursor: string | null };
 export type PageOptions = { limit?: number; cursor?: string };
 export type SyntheticJobInput = {
+  max_attempts?: number;
   idempotency_key: string;
   seed: string;
   iterations: number;

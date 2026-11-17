@@ -20,7 +20,7 @@ export async function reserveJob(
 ) {
   const a = (
     await c.query(
-      "INSERT INTO job_attempts(job_id,device_id,session_id,epoch,state,lease_expires_at) VALUES($1,$2,$3,1,'OFFERED',LEAST($4::timestamptz,clock_timestamp()+interval '30 seconds')) RETURNING *",
+      "INSERT INTO job_attempts(job_id,device_id,session_id,epoch,state,lease_expires_at) VALUES($1,$2,$3,(SELECT COALESCE(max(epoch),0)+1 FROM job_attempts WHERE job_id=$1),'OFFERED',LEAST($4::timestamptz,clock_timestamp()+interval '30 seconds')) RETURNING *",
       [job.id, device, session.id, session.expires_at],
     )
   ).rows[0];
@@ -93,7 +93,7 @@ export function registerScheduler(
       ORDER BY remaining_seconds DESC,r.requested_at,d.id LIMIT 128
     ), jobs AS (
       SELECT j.id,j.created_at,j.timeout_seconds,1 AS cpu_cores,64 AS memory_mb
-      FROM jobs j WHERE j.state='QUEUED' AND EXISTS(SELECT 1 FROM devices d WHERE d.remaining_seconds>j.timeout_seconds+5)
+      FROM jobs j WHERE j.state='QUEUED' AND j.next_eligible_at<=clock_timestamp() AND EXISTS(SELECT 1 FROM devices d WHERE d.remaining_seconds>j.timeout_seconds+5)
       ORDER BY j.created_at,j.id LIMIT 128
     ) SELECT COALESCE((SELECT json_agg(j ORDER BY j.created_at,j.id) FROM jobs j),'[]'::json) AS jobs,
       COALESCE((SELECT json_agg(d) FROM devices d),'[]'::json) AS devices`);
@@ -116,7 +116,7 @@ export function registerScheduler(
         throw new HttpError(409, "Work request is no longer eligible");
       const job = (
         await c.query(
-          "SELECT * FROM jobs WHERE id=$1 AND state='QUEUED' AND timeout_seconds+5<extract(epoch FROM ($2::timestamptz-clock_timestamp())) FOR UPDATE",
+          "SELECT * FROM jobs WHERE id=$1 AND state='QUEUED' AND next_eligible_at<=clock_timestamp() AND timeout_seconds+5<extract(epoch FROM ($2::timestamptz-clock_timestamp())) FOR UPDATE",
           [b.job_id, session.expires_at],
         )
       ).rows[0];

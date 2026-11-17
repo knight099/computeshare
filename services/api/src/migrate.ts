@@ -18,6 +18,7 @@ export async function migrate(pool: pg.Pool, config: Config) {
       [3, "003-services.sql"],
       [4, "004-scheduler.sql"],
       [5, "005-usage.sql"],
+      [6, "006-recovery.sql"],
     ] as const) {
       if (
         !(
@@ -57,7 +58,7 @@ if (
   const pool = new pg.Pool({ connectionString: config.DATABASE_URL });
   try {
     await migrate(pool, config);
-    console.log("Schema version 5 ready");
+    console.log("Schema version 6 ready");
   } finally {
     await pool.end();
   }

@@ -23,7 +23,7 @@ const app = await buildApp(config, {
     const probes = await Promise.allSettled([
       pool
         .query(
-          "SELECT 1 FROM schema_migrations s CROSS JOIN operators_config o WHERE s.version=5 AND o.operator_id=$1",
+          "SELECT 1 FROM schema_migrations s CROSS JOIN operators_config o WHERE s.version=6 AND o.operator_id=$1",
           [config.OPERATOR_ID],
         )
         .then((r) => {

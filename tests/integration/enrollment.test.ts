@@ -1064,28 +1064,31 @@ test("external scheduling requires service role, fresh intent and one atomic cla
     await pool.query("UPDATE devices SET revoked_at=NULL WHERE id=$1", [
       device,
     ]);
-    const session = (
-      await app.inject({
-        method: "POST",
-        url: "/v1/availability-sessions",
-        headers: auth(alice),
-        payload: {
-          device_id: device,
-          duration_seconds: 21600,
-          policy: {
-            cpu_percent: 25,
-            memory_mb: 128,
-            gpu_enabled: false,
-            idle_only: false,
+    const startSession = async () =>
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/availability-sessions",
+          headers: auth(alice),
+          payload: {
+            device_id: device,
+            duration_seconds: 21600,
+            policy: {
+              cpu_percent: 25,
+              memory_mb: 128,
+              gpu_enabled: false,
+              idle_only: false,
+            },
+            consent_version: "sharing-v1",
+            accepted: true,
           },
-          consent_version: "sharing-v1",
-          accepted: true,
-        },
-      })
-    ).json();
+        })
+      ).json();
+    let session = await startSession();
     const client = new OpenComputeClient(base, () => operator);
-    const job = await client.submitSyntheticJob({
+    let job = await client.submitSyntheticJob({
       idempotency_key: "external-schedule",
+      max_attempts: 2,
       seed: "public",
       iterations: 2,
     });
@@ -1108,7 +1111,7 @@ test("external scheduling requires service role, fresh intent and one atomic cla
     );
     const socket = await connect(await credential());
     let seq = 0;
-    const frame = async (type: string) => {
+    const frame = async (type: string, extra: Record<string, unknown> = {}) => {
       const reply = once(socket, "message");
       socket.send(
         JSON.stringify({
@@ -1118,6 +1121,7 @@ test("external scheduling requires service role, fresh intent and one atomic cla
               ? { ...caps, runtimes: ["synthetic-hash-v1"] }
               : undefined,
           session: { id: session.id, status: "ACTIVE" },
+          ...extra,
         }),
       );
       return JSON.parse((await reply)[0].toString());
@@ -1171,7 +1175,8 @@ test("external scheduling requires service role, fresh intent and one atomic cla
       );
       const results = await Promise.all([claim(d.revision), claim(d.revision)]);
       assert.deepEqual(results.map((r) => r.statusCode).sort(), [201, 409]);
-      assert.equal((await frame("WORK_REQUEST")).offer.job_id, job.id);
+      const firstOffer = (await frame("WORK_REQUEST")).offer;
+      assert.equal(firstOffer.job_id, job.id);
       await app.inject({
         method: "POST",
         url: "/v1/availability-sessions/" + session.id + "/stop",
@@ -1183,6 +1188,118 @@ test("external scheduling requires service role, fresh intent and one atomic cla
           .devices.some((d: { device_id: string }) => d.device_id === device),
       );
       assert.equal((await claim(d.revision)).statusCode, 409);
+      assert.equal((await client.getJob(job.id)).state, "QUEUED");
+      session = await startSession();
+      await frame("WORK_REQUEST");
+      await pool.query(
+        "UPDATE jobs SET next_eligible_at=now()+interval '10 seconds' WHERE id=$1",
+        [job.id],
+      );
+      assert(
+        !(await candidates())
+          .json()
+          .jobs.some((j: { id: string }) => j.id === job.id),
+      );
+      await pool.query(
+        "UPDATE jobs SET next_eligible_at=now()-interval '1 second' WHERE id=$1",
+        [job.id],
+      );
+      const replacement = (await candidates())
+        .json()
+        .devices.find((d: { device_id: string }) => d.device_id === device);
+      assert.equal((await claim(replacement.revision)).statusCode, 201);
+      const secondOffer = (await frame("WORK_REQUEST")).offer;
+      assert.equal(secondOffer.epoch, 2);
+      const stale = {
+        id: firstOffer.attempt_id,
+        epoch: firstOffer.epoch,
+        result:
+          "315fc33dbdb63592565e8ed77eff5d3cf512638ea9b26631b7277cc73a3fc395",
+      };
+      assert.equal(
+        (await frame("JOB_COMPLETE", { attempt: stale })).cancel_attempt_id,
+        stale.id,
+      );
+      assert.equal((await client.getJob(job.id)).state, "RUNNING");
+      const attempt = { id: secondOffer.attempt_id, epoch: secondOffer.epoch };
+      await frame("JOB_ACCEPT", { attempt });
+      await frame("JOB_START", { attempt });
+      const completion = { ...attempt, result: stale.result };
+      assert.equal(
+        (await frame("JOB_COMPLETE", { attempt: completion })).job_state,
+        "SUCCEEDED",
+      );
+      await frame("JOB_COMPLETE", { attempt: completion });
+      assert.equal(
+        (
+          await pool.query("SELECT * FROM usage_records WHERE job_id=$1", [
+            job.id,
+          ])
+        ).rowCount,
+        1,
+      );
+      for (const mode of [
+        "worker-failure",
+        "invalid-output",
+        "company-cancel",
+      ] as const) {
+        job = await client.submitSyntheticJob({
+          idempotency_key: mode,
+          seed: "public",
+          iterations: 2,
+          max_attempts: 3,
+        });
+        await frame("WORK_REQUEST");
+        const ready = (await candidates())
+          .json()
+          .devices.find((d: { device_id: string }) => d.device_id === device);
+        assert.equal((await claim(ready.revision)).statusCode, 201);
+        const offered = (await frame("WORK_REQUEST")).offer;
+        const attempt = { id: offered.attempt_id, epoch: offered.epoch };
+        await frame("JOB_ACCEPT", { attempt });
+        await frame("JOB_START", { attempt });
+        if (mode === "company-cancel") await client.cancelJob(job.id);
+        const response =
+          mode === "invalid-output"
+            ? await frame("JOB_COMPLETE", {
+                attempt: { ...attempt, result: "0".repeat(64) },
+              })
+            : await frame("JOB_FAIL", { attempt });
+        const expected =
+          mode === "worker-failure"
+            ? "QUEUED"
+            : mode === "invalid-output"
+              ? "FAILED"
+              : "CANCELED";
+        assert.equal((await client.getJob(job.id)).state, expected);
+        if (mode === "worker-failure") {
+          assert.equal(response.job_state, "QUEUED");
+          await client.cancelJob(job.id);
+        } else {
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT * FROM job_events WHERE job_id=$1 AND state='RETRY_QUEUED'",
+                [job.id],
+              )
+            ).rowCount,
+            0,
+          );
+        }
+        assert.equal(
+          (
+            await pool.query("SELECT * FROM usage_records WHERE job_id=$1", [
+              job.id,
+            ])
+          ).rowCount,
+          0,
+        );
+      }
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions/" + session.id + "/stop",
+        headers: auth(alice),
+      });
     } finally {
       socket.close();
     }

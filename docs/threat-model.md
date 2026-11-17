@@ -27,7 +27,7 @@ M2/M3: offline Stop/expiry, forged usage, runaway workloads, stale leases, dupli
 
 ## M2 preview limits
 
-Compute transitions use one PostgreSQL advisory transaction lock before row locks to avoid cancellation/lease deadlocks. This serializes the small FIFO preview and is not a high-throughput scheduling design. An independent one-second sweep expires offline sessions/attempts; lost work becomes terminal rather than retrying.
+Compute transitions use one PostgreSQL advisory transaction lock before row locks to avoid cancellation/lease deadlocks. This serializes the small FIFO preview and is not a high-throughput scheduling design. An independent one-second sweep expires offline sessions/attempts; lost work is terminal by default, with explicit bounded retry budgets available. New epochs fence old attempts; company cancellation and invalid output are always terminal.
 
 Parent-death supervision and safe cleanup of empty owned cgroups are implemented and tested. Contributor and operator history use scoped chronological cursor pagination. Known-hash verification runs in a bounded worker queue outside transaction locks. Wider battery/thermal/idle and network/disk policies remain unsupported and cannot be requested as enforced controls.
 

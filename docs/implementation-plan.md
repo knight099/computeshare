@@ -50,7 +50,8 @@ Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR
 
 ## M3 — Reliability and technical usage
 
-- [ ] Fenced retries/reassignment, artifact integrity, attempt recovery and idempotent verification under duplicates, disconnects and crashes.
+- [x] Opt-in bounded retries/reassignment for built-in work, lease epochs, delayed eligibility and idempotent successful usage.
+- [ ] Artifact integrity and broader runtime recovery/verification under crashes.
 - [x] Durable usage records with job/attempt/device/session, policy version, measured/reported values, verification state and unique acceptance key.
 - [x] Owner-scoped usage history and operator export/events; reject forged or inconsistent claims and distinguish untrusted agent telemetry.
 - [ ] Gate: worker death/reassignment, stale/reordered/duplicate events, no duplicate accepted usage, output validation, usage reconciliation and audit trail.
@@ -114,4 +115,4 @@ PR #1 merged into main as 0d4c383 after head CI 44176589763 passed. Hardening im
 
 Continue on main with standalone authenticated Go scheduling and TypeScript SDK, then technical usage and resilience. Keep the existing API transaction authority, consent checks and lock ordering. Implement platform/runtime support only when enforceable and tested. The full project is incomplete until the remaining gates above pass; arbitrary/GPU execution additionally requires independent security review.
 
-Scheduler/SDK: implementation8db2d16 passed source/full-stack CI44179371785 with real service authentication. Starvation regression96b33c6 passed source and100job flow; dependency-outage test exposed checked-out pgerrors, fixed3d4a762 with real subprocess RED→GREEN. Schema5usage and SDK history are implemented and reviewed; source checks passed locally, expanded full-stack gate pending.
+Scheduler/SDK: implementation8db2d16 passed source/full-stack CI44179371785 with real service authentication. Starvation regression96b33c6 passed source and100job flow; dependency-outage test exposed checked-out pgerrors, fixed3d4a762 with real subprocess RED→GREEN. Schema 5 usage and SDK history passed source and full-stack CI 44181102875 with 100 unique records. Schema 6 retries passed local source/integration checks and focused review; its full-stack gate is pending.

@@ -12,12 +12,14 @@ const job = await client.submitSyntheticJob({
   seed: "public-data-only",
   iterations: 1000,
   timeout_seconds: 10,
+  max_attempts: 2, // Optional; default one, maximum three.
 });
 const current = await client.getJob(job.id);
 const first = await client.listJobs({ limit: 50 });
 if (first.next_cursor)
   await client.listJobs({ cursor: first.next_cursor, limit: 50 });
 await client.cancelJob(job.id);
+const usage = await client.listUsage({ limit: 50 });
 ```
 
 The caller supplies/refreshes OIDC access tokens and explicit stable idempotency keys. The client does not retry automatically, follow redirects, store credentials, calculate prices or award credits. HTTPS origins are required except loopback development. Errors expose status and optional trace ID, never response bodies or credentials. Server-side schemas and authorization remain authoritative. Only built-in bounded public CPU hash work is supported today.

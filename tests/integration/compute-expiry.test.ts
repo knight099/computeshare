@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import pg from "pg";
 import { loadConfig } from "../../packages/config/src/index.ts";
 import { migrate } from "../../services/api/src/migrate.ts";
-import { expireCompute } from "../../services/api/src/compute-maintenance.ts";
+import { reserveJob } from "../../services/api/src/scheduling.ts";
+import {
+  expireCompute,
+  lockCompute,
+} from "../../services/api/src/compute-maintenance.ts";
 
 test("lease and session expiry become terminal without an agent reconnect", async () => {
   assert(process.env.TEST_DATABASE_URL);
@@ -68,6 +72,61 @@ test("lease and session expiry become terminal without an agent reconnect", asyn
       (await pool.query("SELECT state FROM job_attempts WHERE job_id=$1", [j]))
         .rows[0].state,
       "LOST",
+    );
+    const retryJob = (
+      await pool.query(
+        "INSERT INTO jobs(submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state,max_attempts) VALUES($1,'retry','synthetic-hash-v1','{\"seed\":\"public\",\"iterations\":2}',10,'RUNNING',2) RETURNING *",
+        [user],
+      )
+    ).rows[0];
+    await pool.query(
+      "INSERT INTO job_attempts(job_id,device_id,session_id,epoch,state,lease_expires_at) VALUES($1,$2,$3,1,'RUNNING',now()-interval '1 second')",
+      [retryJob.id, d, s],
+    );
+    await expireCompute(pool);
+    const retried = (
+      await pool.query(
+        "SELECT state,next_eligible_at>clock_timestamp() AS delayed FROM jobs WHERE id=$1",
+        [retryJob.id],
+      )
+    ).rows[0];
+    assert.equal(retried.state, "QUEUED");
+    assert.equal(retried.delayed, true);
+    const c = await pool.connect();
+    let second;
+    try {
+      await c.query("BEGIN");
+      await lockCompute(c);
+      second = await reserveJob(
+        c,
+        retryJob,
+        d,
+        { id: s, expires_at: new Date(Date.now() + 3600000) },
+        "retry-test",
+      );
+      assert.equal(second.epoch, 2);
+      await c.query("COMMIT");
+    } finally {
+      c.release();
+    }
+    await pool.query(
+      "UPDATE job_attempts SET lease_expires_at=now()-interval '1 second' WHERE id=$1",
+      [second.attempt_id],
+    );
+    await expireCompute(pool);
+    assert.equal(
+      (await pool.query("SELECT state FROM jobs WHERE id=$1", [retryJob.id]))
+        .rows[0].state,
+      "FAILED",
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT * FROM job_events WHERE job_id=$1 AND state='RETRY_QUEUED'",
+          [retryJob.id],
+        )
+      ).rowCount,
+      1,
     );
     await pool.query(
       "UPDATE availability_sessions SET expires_at=now()-interval '1 second' WHERE id=$1",
