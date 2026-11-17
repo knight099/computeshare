@@ -20,5 +20,10 @@ export function createDatabasePool(
   });
   // Idle connection failures are EventEmitter errors and otherwise terminate Node.
   pool.on("error", onIdleError);
+  // Checked-out clients also emit errors between queries. Keep these from
+  // terminating Node; pg rejects further queries, transaction callers roll
+  // back/release, and the pool discards the broken connection on release.
+  // Idle failures still reach the pool listener above exactly once.
+  pool.on("connect", (client) => client.on("error", () => {}));
   return pool;
 }
