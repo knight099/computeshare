@@ -81,6 +81,8 @@ importers:
 
   apps/company-console: {}
 
+  packages/sdk-typescript: {}
+
 packages:
 
   '@cacheable/memory@2.2.0':

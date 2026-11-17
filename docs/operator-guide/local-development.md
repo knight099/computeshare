@@ -35,3 +35,11 @@ For a deliberate device-key replacement: revoke the old device using the owner's
 ## Network verification boundaries
 
 CI verifies outbound enrollment/heartbeats from a Linux agent, actual browser-to-Keycloak PKCE/CORS, and reconnection after the gateway restarts. CLI login briefly listens on loopback only. Go HTTP and WebSocket clients honor standard proxy environment variables. A production operator must still validate its own HTTPS proxy configuration, IPv6, residential CGNAT, TLS termination, certificates, and idle timeouts; local CI is not a substitute for that compatibility matrix.
+
+## Scheduler identity and upgrades
+
+Fresh `make dev` deployments import the confidential `opencompute-scheduler` client and `scheduler_service` realm role. `make configure` appends a unique `SCHEDULER_CLIENT_SECRET` to older `.env` files while preserving all existing values. The scheduler uses client credentials, has no human login/password flow, and runs without root or published host ports.
+
+Keycloak does not reimport an existing realm. For an existing development volume, use the Keycloak admin console to add realm role `scheduler_service`; create confidential OIDC client `opencompute-scheduler` with service accounts enabled, standard/password flows disabled, secret matching your local `.env`, and the same `opencompute-api` audience mapper as the other clients. Assign only `scheduler_service` to its service-account user. Restart identity with the new environment and start the scheduler. Preserve volumes and existing users; do not delete data to make import work.
+
+The Compose HTTP allowance is development-only. Production scheduler deployments require HTTPS API/token origins, a dedicated confidential client and rotated secret supplied through the operator's secret manager. Never grant this role to contributors or ordinary submitters. A scheduler outage prevents new external assignments; active local Stop, expiry and API job state remain independent.

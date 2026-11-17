@@ -16,8 +16,10 @@ test:
 	$(MAKE) test-go
 test-go:
 	cd agents/node-agent && go test -race ./...
+	cd services/scheduler && go test -race ./...
 test-integration:
 	pnpm test:integration
 build:
 	pnpm build
 	cd agents/node-agent && go build -o ../../bin/opencompute-agent .
+	cd services/scheduler && go build -o ../../bin/opencompute-scheduler .

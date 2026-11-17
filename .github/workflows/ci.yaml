@@ -28,7 +28,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache-dependency-path: agents/node-agent/go.sum
+          cache-dependency-path: |
+            agents/node-agent/go.sum
+            services/scheduler/go.mod
       - run: pnpm install --frozen-lockfile
       - run: make lint typecheck test build
       - name: Start JetStream for outbox integration
@@ -37,7 +39,8 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://test:integration-only-not-a-production-secret@localhost:5432/test
       - run: cd agents/node-agent && go vet ./...
-      - run: test -z "$(gofmt -l agents/node-agent)"
+      - run: cd services/scheduler && go vet ./...
+      - run: test -z "$(gofmt -l agents/node-agent services/scheduler)"
   compose-acceptance:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -50,7 +53,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-          cache-dependency-path: agents/node-agent/go.sum
+          cache-dependency-path: |
+            agents/node-agent/go.sum
+            services/scheduler/go.mod
       - run: pnpm install --frozen-lockfile
       - run: cd agents/node-agent && go build -o ../../bin/opencompute-agent .
       - run: make configure
@@ -75,6 +80,6 @@ jobs:
           docker compose stop postgres
           for i in 1 2 3; do curl --fail --max-time 5 http://localhost:8080/healthz; sleep 1; done
       - if: failure()
-        run: docker compose ps -a && docker compose logs --tail=80 api identity migrate storage
+        run: docker compose ps -a && docker compose logs --tail=80 api identity migrate storage scheduler
       - if: always()
         run: docker compose down

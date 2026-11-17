@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type pg from "pg";
+import { reserveJob, requestedOffer } from "./scheduling.ts";
 import { HashVerifier } from "./verifier.ts";
 import { registerJobPages } from "./job-pages.ts";
 import { z } from "zod";
@@ -48,6 +49,7 @@ type User = { id: string; subject: string; roles: string[] };
 type Auth = {
   pool: pg.Pool;
   user: (r: FastifyRequest) => Promise<User>;
+  externalScheduler: () => boolean;
   deviceAuth: (r: FastifyRequest) => Promise<{ id: string }>;
 };
 
@@ -419,7 +421,16 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
             [device],
           )
         ).rowCount;
-        if (s && !busy) {
+        if (s && auth.externalScheduler()) {
+          const offer = await requestedOffer(c, device, s.id);
+          if (offer) response = { offer };
+          else if (!busy)
+            await c.query(
+              "INSERT INTO device_work_requests(device_id,session_id,expires_at) VALUES($1,$2,clock_timestamp()+interval '3 seconds') ON CONFLICT(device_id) DO UPDATE SET session_id=EXCLUDED.session_id,revision=CASE WHEN device_work_requests.session_id=EXCLUDED.session_id THEN device_work_requests.revision ELSE device_work_requests.revision+1 END,requested_at=clock_timestamp(),expires_at=EXCLUDED.expires_at",
+              [device, s.id],
+            );
+        }
+        if (s && !busy && !auth.externalScheduler()) {
           const job = (
             await c.query(
               "SELECT * FROM jobs WHERE state='QUEUED' AND timeout_seconds+5<extract(epoch FROM ($1::timestamptz-now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
@@ -427,27 +438,8 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
             )
           ).rows[0];
           if (job) {
-            const a = (
-              await c.query(
-                "INSERT INTO job_attempts(job_id,device_id,session_id,epoch,state,lease_expires_at) VALUES($1,$2,$3,1,'OFFERED',LEAST($4::timestamptz,now()+interval '30 seconds')) RETURNING *",
-                [job.id, device, s.id, s.expires_at],
-              )
-            ).rows[0];
-            await c.query("UPDATE jobs SET state='RUNNING' WHERE id=$1", [
-              job.id,
-            ]);
-            await event(c, job.id, a.id, "OFFERED", m.trace_id);
             response = {
-              offer: {
-                attempt_id: a.id,
-                job_id: job.id,
-                session_id: s.id,
-                epoch: a.epoch,
-                lease_expires_at: a.lease_expires_at,
-                ...job.payload,
-                timeout_seconds: job.timeout_seconds,
-                workload_type: "synthetic-hash-v1",
-              },
+              offer: await reserveJob(c, job, device, s, m.trace_id),
             };
           }
         }

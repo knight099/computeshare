@@ -50,6 +50,7 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Run make configure}
       KC_HOSTNAME: ${OIDC_ISSUER_BASE:-http://localhost:8081}
       KC_HOSTNAME_STRICT: "false"
+      SCHEDULER_CLIENT_SECRET: ${SCHEDULER_CLIENT_SECRET:?Run make configure}
     ports: ["127.0.0.1:${IDENTITY_PORT:-8081}:8081"]
     volumes:
       [
@@ -63,6 +64,7 @@ services:
     command: ["pnpm", "migrate"]
     environment: &api-env
       NODE_ENV: development
+      SCHEDULER_MODE: external
       DATABASE_URL: postgres://opencompute:${POSTGRES_PASSWORD}@postgres:5432/opencompute
       REDIS_URL: redis://redis:6379
       NATS_URL: nats://nats:4222
@@ -99,6 +101,23 @@ services:
       interval: 5s
       timeout: 4s
       retries: 60
+  scheduler:
+    build:
+      context: .
+      dockerfile: services/scheduler/Dockerfile
+    environment:
+      API_BASE_URL: http://api:8080
+      OIDC_TOKEN_URL: http://identity:8081/realms/opencompute/protocol/openid-connect/token
+      OIDC_CLIENT_ID: opencompute-scheduler
+      OIDC_CLIENT_SECRET: ${SCHEDULER_CLIENT_SECRET:?Run make configure}
+      SCHEDULER_ALLOW_HTTP: "true"
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/scheduler", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
   console:
     build:
       context: .

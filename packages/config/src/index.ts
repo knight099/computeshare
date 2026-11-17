@@ -5,6 +5,7 @@ const schema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
+  SCHEDULER_MODE: z.enum(["inline", "external"]).default("inline"),
   PORT: z.coerce.number().int().min(1).max(65535).default(8080),
   DATABASE_URL: url,
   REDIS_URL: url,

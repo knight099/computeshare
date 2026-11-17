@@ -21,6 +21,13 @@ export async function migrate(pool: pg.Pool, config: Config) {
       await client.query(
         await readFile(new URL("./003-services.sql", import.meta.url), "utf8"),
       );
+    if (
+      !(await client.query("SELECT 1 FROM schema_migrations WHERE version=4"))
+        .rowCount
+    )
+      await client.query(
+        await readFile(new URL("./004-scheduler.sql", import.meta.url), "utf8"),
+      );
     await client.query(
       "INSERT INTO operators_config(singleton, operator_id, display_name) VALUES(true,$1,$2) ON CONFLICT DO NOTHING",
       [config.OPERATOR_ID, config.OPERATOR_NAME],
@@ -47,7 +54,7 @@ if (
   const pool = new pg.Pool({ connectionString: config.DATABASE_URL });
   try {
     await migrate(pool, config);
-    console.log("Schema version 3 ready");
+    console.log("Schema version 4 ready");
   } finally {
     await pool.end();
   }

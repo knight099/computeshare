@@ -40,3 +40,12 @@ Job lists accept `limit=1..200` (default 200) and an opaque `cursor`, and return
 Submission performs bounded asynchronous verification before opening its transaction. A saturated, failed or timed-out verifier returns 503; clients may retry with the **same** idempotency key. A duplicate of an already committed job bypasses verification.
 
 Job events are durably captured into the database outbox and published on `opencompute.{operator_uuid}.jobs.events` in JetStream stream `OC_{operator_uuid_without_hyphens}`. Metadata includes `protocol_version`, string `event_id`, `job_id`, optional `attempt_id`, `state`, `trace_id`, and `occurred_at`; workload seeds and credentials are excluded. Delivery is at least once and can reorder: consumers must deduplicate by operator/event ID and consult authoritative job state when needed. This stream does not yet dispatch work or award credits.
+
+## Scheduler service boundary
+
+Compose runs `SCHEDULER_MODE=external` and a separate Go scheduler. The API's default `inline` mode retains the initial development FIFO path; both modes use the same reservation function and database transaction rules. The service authenticates with OIDC client credentials and the `scheduler_service` realm role. Human operator roles do not grant service access.
+
+- `GET /internal/scheduler/candidates`: bounded snapshot (128 jobs/devices) with IDs, resource requirements, FIFO timestamps, request revision and remaining seconds; no workload seeds or device credentials.
+- `POST /internal/scheduler/claims`: `{job_id,device_id,session_id,request_revision}`; returns 201/attempt ID or 409 when stale/ineligible. API rechecks a local work request fresher than three seconds, active consent/session, revocation, capabilities, memory, deadline plus five-second margin, job state and exclusive capacity under the compute transaction lock. No scheduler-owned database state exists.
+
+Offers are returned only on a subsequent authenticated matching agent work request. Snapshots are advisory; stale/conflicting proposals are expected. The scheduler caches short-lived service tokens, rejects redirects, uses bounded requests, and marks readiness only after successful polling. JetStream remains a durable metadata event channel, not the dispatch authority. The global API compute lock is still a throughput limit; this service is not an HA/scale certification.

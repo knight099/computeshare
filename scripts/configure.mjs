@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync, appendFileSync } from "node:fs";
 try {
   writeFileSync(
     ".env",
@@ -12,4 +12,14 @@ try {
 } catch (e) {
   if (e.code === "EEXIST") console.log("Existing .env preserved");
   else throw e;
+}
+
+// Upgrade existing development configuration without replacing established secrets.
+if (!/^SCHEDULER_CLIENT_SECRET=/m.test(readFileSync(".env", "utf8"))) {
+  appendFileSync(
+    ".env",
+    `\nSCHEDULER_CLIENT_SECRET=${randomBytes(32).toString("hex")}\n`,
+    { mode: 0o600 },
+  );
+  console.log("Added scheduler service credential; existing values preserved");
 }

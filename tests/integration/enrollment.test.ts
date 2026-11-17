@@ -1,3 +1,4 @@
+import { OpenComputeClient } from "../../packages/sdk-typescript/src/index.ts";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
@@ -980,4 +981,155 @@ test("contributor history is chronological and microsecond-safe across pages", a
     ).json().jobs,
     [],
   );
+});
+
+test("typed SDK submits, replays, reads and cancels against authenticated real API", async () => {
+  const client = new OpenComputeClient(base, () => operator);
+  const input = {
+    idempotency_key: "sdk-real-api",
+    seed: "public",
+    iterations: 2,
+  };
+  const job = await client.submitSyntheticJob(input);
+  assert.equal((await client.submitSyntheticJob(input)).id, job.id);
+  assert.equal((await client.getJob(job.id)).state, "QUEUED");
+  const listed = await client.listJobs({ limit: 1 });
+  assert.equal(listed.jobs.length, 1);
+  assert.equal((await client.cancelJob(job.id)).canceled, true);
+  assert.equal((await client.getJob(job.id)).state, "CANCELED");
+  assert.equal(
+    (await new OpenComputeClient(base, () => bob).listContributorJobs()).jobs
+      .length,
+    0,
+  );
+});
+
+test("external scheduling requires service role, fresh intent and one atomic claim", async () => {
+  config.SCHEDULER_MODE = "external";
+  const service = await issue("scheduler", ["scheduler_service"]);
+  const candidates = () =>
+    app.inject({
+      url: "/internal/scheduler/candidates",
+      headers: auth(service),
+    });
+  try {
+    assert.equal(
+      (
+        await app.inject({
+          url: "/internal/scheduler/candidates",
+          headers: auth(operator),
+        })
+      ).statusCode,
+      403,
+    );
+    await pool.query("UPDATE devices SET revoked_at=NULL WHERE id=$1", [
+      device,
+    ]);
+    const session = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions",
+        headers: auth(alice),
+        payload: {
+          device_id: device,
+          duration_seconds: 21600,
+          policy: {
+            cpu_percent: 25,
+            memory_mb: 128,
+            gpu_enabled: false,
+            idle_only: false,
+          },
+          consent_version: "sharing-v1",
+          accepted: true,
+        },
+      })
+    ).json();
+    const client = new OpenComputeClient(base, () => operator);
+    const job = await client.submitSyntheticJob({
+      idempotency_key: "external-schedule",
+      seed: "public",
+      iterations: 2,
+    });
+    const claim = (revision: number) =>
+      app.inject({
+        method: "POST",
+        url: "/internal/scheduler/claims",
+        headers: auth(service),
+        payload: {
+          job_id: job.id,
+          device_id: device,
+          session_id: session.id,
+          request_revision: revision,
+        },
+      });
+    assert.equal(
+      (await claim(1)).statusCode,
+      409,
+      "no autonomous dispatch without a local request",
+    );
+    const socket = await connect(await credential());
+    let seq = 0;
+    const frame = async (type: string) => {
+      const reply = once(socket, "message");
+      socket.send(
+        JSON.stringify({
+          ...message(device, seq++, type),
+          capabilities:
+            type === "HELLO"
+              ? { ...caps, runtimes: ["synthetic-hash-v1"] }
+              : undefined,
+          session: { id: session.id, status: "ACTIVE" },
+        }),
+      );
+      return JSON.parse((await reply)[0].toString());
+    };
+    try {
+      await frame("HELLO");
+      assert.equal((await frame("WORK_REQUEST")).offer, undefined);
+      const snapshot = (await candidates()).json();
+      const d = snapshot.devices.find(
+        (d: { device_id: string }) => d.device_id === device,
+      );
+      assert(d);
+      assert(snapshot.jobs.some((j: { id: string }) => j.id === job.id));
+      assert.equal((await claim(d.revision + 1)).statusCode, 409);
+      await pool.query(
+        "UPDATE device_work_requests SET expires_at=now()-interval '1 second' WHERE device_id=$1",
+        [device],
+      );
+      assert.equal((await claim(d.revision)).statusCode, 409);
+      await frame("WORK_REQUEST");
+      await pool.query(
+        "UPDATE availability_sessions SET expires_at=now()+interval '14 seconds' WHERE id=$1",
+        [session.id],
+      );
+      assert.equal(
+        (await claim(d.revision)).statusCode,
+        409,
+        "deadline safety margin rechecked on claim",
+      );
+      await pool.query(
+        "UPDATE availability_sessions SET expires_at=now()+interval '6 hours' WHERE id=$1",
+        [session.id],
+      );
+      const results = await Promise.all([claim(d.revision), claim(d.revision)]);
+      assert.deepEqual(results.map((r) => r.statusCode).sort(), [201, 409]);
+      assert.equal((await frame("WORK_REQUEST")).offer.job_id, job.id);
+      await app.inject({
+        method: "POST",
+        url: "/v1/availability-sessions/" + session.id + "/stop",
+        headers: auth(alice),
+      });
+      assert(
+        !(await candidates())
+          .json()
+          .devices.some((d: { device_id: string }) => d.device_id === device),
+      );
+      assert.equal((await claim(d.revision)).statusCode, 409);
+    } finally {
+      socket.close();
+    }
+  } finally {
+    config.SCHEDULER_MODE = "inline";
+  }
 });

@@ -11,6 +11,7 @@ import {
 } from "../../../packages/protocol/src/index.ts";
 import { HttpError, oidcVerifier, requireRole } from "./auth.ts";
 import { recordPresence } from "./presence.ts";
+import { registerScheduler } from "./scheduling.ts";
 import { registerCompute } from "./compute.ts";
 
 export const tokenHash = (value: string) =>
@@ -183,7 +184,13 @@ export async function buildApp(
     return rows[0] as { id: string; expires_at: Date };
   }
 
-  const compute = registerCompute(app, { pool, user, deviceAuth });
+  const compute = registerCompute(app, {
+    pool,
+    user,
+    deviceAuth,
+    externalScheduler: () => config.SCHEDULER_MODE === "external",
+  });
+  registerScheduler(app, pool, authenticate);
   app.get("/healthz", async () => ({ status: "ok" }));
   app.get("/readyz", async (_req, reply) => {
     let checks: Record<string, boolean>;

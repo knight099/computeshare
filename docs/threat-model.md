@@ -23,10 +23,12 @@ The gateway rejects oversized messages, unknown fields/versions, forged device I
 
 ## Required future adversarial tests
 
-M2/M3: offline Stop/expiry, forged usage, runaway workloads, stale leases, duplicate events, corrupt artifacts and zero duplicate settlements. M4: malicious configuration, retargeting, revoked releases and downgrade attacks. M5: filesystem/network escape, host credentials, VM isolation and hostile GPU workloads. M6: unauthorized peers, cache poisoning, relay abuse, backup restoration and partial outages.
+M2/M3: offline Stop/expiry, forged usage, runaway workloads, stale leases, duplicate events, corrupt artifacts and zero duplicate accepted usage records. M4: malicious configuration, retargeting, revoked releases and downgrade attacks. M5: filesystem/network escape, host credentials, VM isolation and hostile GPU workloads. M6: unauthorized peers, cache poisoning, relay abuse, backup restoration and partial outages.
 
 ## M2 preview limits
 
 Compute transitions use one PostgreSQL advisory transaction lock before row locks to avoid cancellation/lease deadlocks. This serializes the small FIFO preview and is not a high-throughput scheduling design. An independent one-second sweep expires offline sessions/attempts; lost work becomes terminal rather than retrying.
 
-Remaining review minors: SIGKILL/agent crashes can leave a bounded trusted hash worker until it finishes (still under its cgroup limits); parent-death termination and stale-group cleanup need dedicated crash acceptance. Contributor history is capped at 200 UUID-ordered jobs; chronological pagination is pending. Known-hash verification is synchronous and bounded to one million hashes but can delay the API event loop; a verifier worker/pool is required before scaling beyond this preview. Wider battery/thermal/idle and network/disk policies are unsupported and cannot be requested as enforced controls.
+Parent-death supervision and safe cleanup of empty owned cgroups are implemented and tested. Contributor and operator history use scoped chronological cursor pagination. Known-hash verification runs in a bounded worker queue outside transaction locks. Wider battery/thermal/idle and network/disk policies remain unsupported and cannot be requested as enforced controls.
+
+External scheduling uses a narrowly authorized service identity. A compromised scheduler may propose jobs but cannot bypass live request, resource, session, lease or revocation checks in the API, access workload seeds through candidates, or execute without local agent consent. Candidate snapshots expire; all reservations remain atomic in PostgreSQL. Service-token theft is an operator credential incident; enforce HTTPS outside explicit development networks and rotate/revoke the client.
