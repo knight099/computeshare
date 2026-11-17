@@ -1,6 +1,6 @@
 # Verification evidence — identity and synthetic compute preview
 
-Date: 2026-11-17. Latest verified implementation: [bounded retries commit 4a8370b](https://github.com/knight099/computeshare/actions/runs/44182487190), with source and complete Compose acceptance passing. [Database-outage recovery 3d4a762](https://github.com/knight099/computeshare/actions/runs/44180788407) also passed. Earlier M1 and CPU-preview gates remain linked in the implementation history.
+Date: 2026-11-17. Latest verified implementation: [revocation/session fencing commit 5ec9e59](https://github.com/knight099/computeshare/actions/runs/44182919710), with source and complete Compose acceptance passing. [Database-outage recovery 3d4a762](https://github.com/knight099/computeshare/actions/runs/44180788407) also passed. Earlier M1 and CPU-preview gates remain linked in the implementation history.
 
 | Check                                    | Observed result                                                                                                                                                     |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -49,3 +49,5 @@ Scheduler/SDK implementation 8db2d16 passed full CI 44179371785. A subsequent bo
 Usage schema 5 passed independent review, 25 integration tests, and full CI 44181102875 with 100 unique records, validated outputs and positive bounded cgroup metrics explicitly marked untrusted. Rejected or plausible host claims never become attestation or financial balances. Logical configured iterations are not proof of physical CPU time.
 
 Recovery schema 6 has local coverage for lease loss, attempt-budget exhaustion, delayed eligibility, local Stop/new consent, higher epochs, stale-result rejection, worker failure retry, terminal invalid output and terminal company cancellation. No Critical/Important review finding remains. Full-stack source and Compose acceptance passed in CI 44182487190.
+
+Device revocation/session fencing commit 5ec9e59 passed source and full-stack CI 44182919710. The regression observed ACTIVE before the fix and STOPPED afterward, with active attempts canceled, opted-in replacement work queued and no accepted usage created for revoked work. Both session creation and completion recheck revocation under the shared transaction ordering.
