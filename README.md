@@ -2,7 +2,7 @@
 
 An open-source, self-hosted compute-contribution framework. Each company owns its control plane, identity provider, device fleet, policies, branding, and data.
 
-**Current release: M1 identity complete, M2 synthetic compute preview.** The platform supports OIDC/PKCE, explicit consent, public-key enrollment, outbound heartbeats, revocation, capability history and credential cleanup. The new local contributor dashboard supports timed sharing, offline Stop/expiry, constrained built-in CPU hashes, and job/result views. **Payments, credits and business management are outside product scope. Arbitrary workloads, GPU execution and signed installers are not implemented.** This is not production-ready.
+**Current release: M1 identity complete, M2 synthetic compute preview.** The platform supports OIDC/PKCE, explicit consent, public-key enrollment, outbound heartbeats, revocation, capability history and credential cleanup. The new local contributor dashboard supports timed sharing, offline Stop/expiry, constrained built-in CPU hashes, job/result views, a separate authenticated Go scheduler, and technical usage records. **Payments, credits and business management are outside product scope. Arbitrary workloads, GPU execution and signed installers are not implemented.** This is not production-ready.
 
 ## Run locally
 
@@ -39,8 +39,8 @@ make lint
 make typecheck
 make test
 make build
-# Disposable database; tests create/drop their own isolated schema.
-TEST_DATABASE_URL=postgres://user:password@localhost:5432/test_db make test-integration
+# Disposable PostgreSQL and NATS JetStream required; tests isolate schemas/streams.
+TEST_DATABASE_URL=postgres://user:password@localhost:5432/test_db TEST_NATS_URL=nats://localhost:4222 make test-integration
 # Requires make dev, built agent, Chromium, generated .env and a delegated cgroup scope.
 # Uses a temporary Keycloak user; CI prepares these prerequisites explicitly.
 pnpm test:e2e

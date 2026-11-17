@@ -38,6 +38,13 @@ export const controlMessageSchema = z
       .object({
         id: z.string().uuid(),
         epoch: z.number().int().positive(),
+        usage: z
+          .object({
+            cpu_usage_usec: z.number().int().nonnegative().safe(),
+            memory_peak_bytes: z.number().int().nonnegative().safe(),
+          })
+          .strict()
+          .optional(),
         result: z
           .string()
           .regex(/^[a-f0-9]{64}$/)

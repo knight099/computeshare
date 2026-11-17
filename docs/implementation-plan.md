@@ -30,19 +30,20 @@ Historical source: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). 
 
 ## M2 — Contributor sessions and safe compute
 
-Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. The CPU slice and hardening passed source and full-stack CI on aba2355 (run 44175864569), including browser controls, 100 constrained jobs and Stop during a network partition. Separate Go scheduler, TypeScript SDK/artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
+Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. The CPU slice and hardening passed source and full-stack CI on aba2355 (run 44175864569), including browser controls, 100 constrained jobs and Stop during a network partition. Artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
 
 - [x] Availability sessions with 1/2/4/6/8/12-hour presets, immutable policy and consent snapshots; no automatic renewal.
 - [x] Local Stop, boot-clock/offline expiry, reboot non-resumption, and connection-loss cancellation.
 - [ ] Idle/power/thermal policy adapters and full platform transition matrix.
 - [x] Enforced worker CPU/RAM/swap/pids limits. Unsupported GPU/idle/custom resource controls are rejected; no workload files or network destinations.
 - [ ] Broader disk/network/power/thermal policy controls.
-- [ ] Go scheduler: deterministic eligibility, remaining-time safety margin, atomic capacity reservation, offer/accept/reject, leases and epochs.
+- [x] Go scheduler: deterministic eligibility, remaining-time safety margin, atomic capacity reservation, offer/accept/reject, leases and epochs.
 - [x] Allowlisted bounded public CPU hash worker; no scripts, arbitrary binaries, shell commands, images or GPU access.
 - [ ] Additional reviewed public-data transforms.
 - [x] Transactional job-event outbox with leased delivery into operator-scoped durable JetStream events; stable message IDs, bounded stream retention and retry after failures.
 - [x] Parent-death worker termination, empty owned-cgroup cleanup, scoped chronological history pagination, bounded verification outside the API event loop and compute transaction locks.
-- [ ] TypeScript SDK, artifact integrity and expanded result interfaces.
+- [x] Typed workload SDK with safe transport, stable idempotency and history/usage pagination (workspace preview).
+- [ ] Artifact integrity and expanded result interfaces.
 - [ ] Contributor Home/settings/jobs/activity/diagnostics/privacy screens, resource telemetry and redacted job history.
 - [x] Initial CPU gate: six-hour session creation, 100 synthetic jobs, cgroup limits, offline Stop during partition, outbound/NAT baseline, and local boot-clock/expiry tests.
 - [ ] Full M2 gate remains open for the follow-ups above; no six-hour wall-clock soak or complete platform-policy certification claimed.
@@ -50,8 +51,8 @@ Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR
 ## M3 — Reliability and technical usage
 
 - [ ] Fenced retries/reassignment, artifact integrity, attempt recovery and idempotent verification under duplicates, disconnects and crashes.
-- [ ] Durable usage records with job/attempt/device/session, policy version, measured/reported values, verification state and unique acceptance key.
-- [ ] Owner-scoped usage history and operator export/events; reject forged or inconsistent claims and distinguish untrusted agent telemetry.
+- [x] Durable usage records with job/attempt/device/session, policy version, measured/reported values, verification state and unique acceptance key.
+- [x] Owner-scoped usage history and operator export/events; reject forged or inconsistent claims and distinguish untrusted agent telemetry.
 - [ ] Gate: worker death/reassignment, stale/reordered/duplicate events, no duplicate accepted usage, output validation, usage reconciliation and audit trail.
 
 Payments, pricing, credit ledgers and financial management are excluded; companies integrate their own systems.
@@ -112,3 +113,5 @@ Payments, pricing, credit ledgers and financial management are excluded; compani
 PR #1 merged into main as 0d4c383 after head CI 44176589763 passed. Hardening implementation aba2355 passed CI 44175864569 including 100 real constrained CPU jobs, browser authentication, empty cgroup cleanup, reconnect and offline Stop. See verification evidence and engineering tracker.
 
 Continue on main with standalone authenticated Go scheduling and TypeScript SDK, then technical usage and resilience. Keep the existing API transaction authority, consent checks and lock ordering. Implement platform/runtime support only when enforceable and tested. The full project is incomplete until the remaining gates above pass; arbitrary/GPU execution additionally requires independent security review.
+
+Scheduler/SDK: implementation8db2d16 passed source/full-stack CI44179371785 with real service authentication. Starvation regression96b33c6 passed source and100job flow; dependency-outage test exposed checked-out pgerrors, fixed3d4a762 with real subprocess RED→GREEN. Schema5usage and SDK history are implemented and reviewed; source checks passed locally, expanded full-stack gate pending.

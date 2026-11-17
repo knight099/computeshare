@@ -143,6 +143,7 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 				kind = "JOB_FAIL"
 			} else {
 				values["result"] = outcome.result.Result
+				values["usage"] = map[string]uint64{"cpu_usage_usec": outcome.result.CPUUsec, "memory_peak_bytes": outcome.result.MemoryBytes}
 			}
 			ack, e := send(kind, values)
 			status := "FAILED"

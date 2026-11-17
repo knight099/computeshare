@@ -1,3 +1,4 @@
+import { recordUsage } from "../../services/api/src/usage.ts";
 import { OpenComputeClient } from "../../packages/sdk-typescript/src/index.ts";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -633,6 +634,7 @@ test(
         ...a,
         result:
           "315fc33dbdb63592565e8ed77eff5d3cf512638ea9b26631b7277cc73a3fc395",
+        usage: { cpu_usage_usec: 1000, memory_peak_bytes: 1024 },
       };
       assert.equal(
         (await frame("JOB_COMPLETE", { attempt: complete })).job_state,
@@ -647,6 +649,43 @@ test(
         [job.id],
       );
       assert.equal(events.rowCount, 1);
+      const usage = (
+        await app.inject({ url: "/v1/contributor/usage", headers: auth(alice) })
+      ).json();
+      assert.equal(
+        usage.records.filter(
+          (r: { attempt_id: string }) => r.attempt_id === a.id,
+        ).length,
+        1,
+      );
+      const record = usage.records.find(
+        (r: { attempt_id: string }) => r.attempt_id === a.id,
+      );
+      assert.equal(record.output_verified, true);
+      assert.equal(record.logical_iterations, 2);
+      assert.equal(record.cpu_usage_usec, "1000");
+      assert.equal(record.telemetry_status, "REPORTED_UNTRUSTED");
+      assert.equal(
+        (
+          await app.inject({ url: "/v1/contributor/usage", headers: auth(bob) })
+        ).json().records.length,
+        0,
+      );
+      assert.equal(
+        (await app.inject({ url: "/v1/operator/usage", headers: auth(bob) }))
+          .statusCode,
+        403,
+      );
+      assert.equal(
+        (
+          await app.inject({
+            url: "/v1/operator/usage",
+            headers: auth(operator),
+          })
+        ).json().records.length,
+        1,
+      );
+
       await app.inject({
         method: "POST",
         url: "/v1/availability-sessions/" + session.id + "/stop",
@@ -1149,5 +1188,93 @@ test("external scheduling requires service role, fresh intent and one atomic cla
     }
   } finally {
     config.SCHEDULER_MODE = "inline";
+  }
+});
+
+test("usage rejects implausible telemetry, preserves first record and excludes invalid output", async () => {
+  const fixture = await pool.query(
+    `SELECT a.id,a.device_id,a.session_id,j.submitter_id FROM job_attempts a JOIN jobs j ON j.id=a.job_id WHERE a.state='VERIFIED' AND j.payload->>'iterations' IS NOT NULL LIMIT 1`,
+  );
+  const original = fixture.rows[0];
+  assert(original);
+  async function makeAttempt(key: string, state: string) {
+    const job = (
+      await pool.query(
+        'INSERT INTO jobs(submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state) VALUES($1,$2,\'synthetic-hash-v1\',\'{"seed":"public","iterations":2}\',10,$3) RETURNING id',
+        [
+          original.submitter_id,
+          key,
+          state === "VERIFIED" ? "SUCCEEDED" : "FAILED",
+        ],
+      )
+    ).rows[0].id;
+    const attempt = (
+      await pool.query(
+        "INSERT INTO job_attempts(job_id,device_id,session_id,epoch,state,lease_expires_at,started_at,finished_at) VALUES($1,$2,$3,1,$4,now(),now()-interval '1 second',now()) RETURNING id",
+        [job, original.device_id, original.session_id, state],
+      )
+    ).rows[0].id;
+    return { job, attempt };
+  }
+  const forged = await makeAttempt("usage-forged", "VERIFIED");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await recordUsage(client, forged.attempt, {
+      cpu_usage_usec: 600000000,
+      memory_peak_bytes: 900000000000,
+    });
+    await recordUsage(client, forged.attempt, {
+      cpu_usage_usec: 1,
+      memory_peak_bytes: 1,
+    });
+    await client.query("COMMIT");
+    const record = (
+      await pool.query("SELECT * FROM usage_records WHERE job_id=$1", [
+        forged.job,
+      ])
+    ).rows[0];
+    assert.equal(record.telemetry_status, "REJECTED");
+    assert.equal(record.rejection_reason, "EXCEEDS_POLICY_BOUNDS");
+    assert.equal(record.cpu_usage_usec, "600000000");
+    const sdk = new OpenComputeClient(base, () => operator);
+    const first = await sdk.listUsage({ limit: 1 });
+    assert.equal(first.records.length, 1);
+    assert(first.next_cursor);
+    const second = await sdk.listUsage({ limit: 1, cursor: first.next_cursor });
+    assert.equal(second.records.length, 1);
+    assert.notEqual(first.records[0].id, second.records[0].id);
+    assert.equal(
+      (await new OpenComputeClient(base, () => bob).listContributorUsage())
+        .records.length,
+      0,
+    );
+
+    const legacy = await makeAttempt("usage-not-reported", "VERIFIED");
+    await recordUsage(client, legacy.attempt);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT telemetry_status FROM usage_records WHERE job_id=$1",
+          [legacy.job],
+        )
+      ).rows[0].telemetry_status,
+      "NOT_REPORTED",
+    );
+    const invalid = await makeAttempt("usage-invalid-output", "FAILED");
+    await recordUsage(client, invalid.attempt, {
+      cpu_usage_usec: 1,
+      memory_peak_bytes: 1,
+    });
+    assert.equal(
+      (
+        await pool.query("SELECT * FROM usage_records WHERE job_id=$1", [
+          invalid.job,
+        ])
+      ).rowCount,
+      0,
+    );
+  } finally {
+    client.release();
   }
 });

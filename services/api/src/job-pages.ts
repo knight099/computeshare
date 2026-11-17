@@ -1,21 +1,12 @@
+import {
+  historyPageSchema,
+  decodeHistoryCursor,
+  encodeHistoryCursor,
+} from "./pagination.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type pg from "pg";
-import { z } from "zod";
-import { HttpError, requireRole } from "./auth.ts";
+import { requireRole } from "./auth.ts";
 type User = { id: string; subject: string; roles: string[] };
-const cursorSchema = z
-  .object({ time: z.iso.datetime({ precision: 6 }), id: z.string().uuid() })
-  .strict();
-const pageSchema = z
-  .object({
-    limit: z.coerce.number().int().min(1).max(200).default(200),
-    cursor: z
-      .string()
-      .max(512)
-      .regex(/^[A-Za-z0-9_-]+$/)
-      .optional(),
-  })
-  .strict();
 export function registerJobPages(
   app: FastifyInstance,
   pool: pg.Pool,
@@ -33,17 +24,8 @@ export function registerJobPages(
             "auditor",
             "workload_submitter",
           ]);
-        const p = pageSchema.parse(r.query);
-        let cursor: z.infer<typeof cursorSchema> | undefined;
-        if (p.cursor) {
-          try {
-            cursor = cursorSchema.parse(
-              JSON.parse(Buffer.from(p.cursor, "base64url").toString("utf8")),
-            );
-          } catch {
-            throw new HttpError(400, "Invalid history cursor");
-          }
-        }
+        const p = historyPageSchema.parse(r.query);
+        const cursor = decodeHistoryCursor(p.cursor);
         const all =
           !contributor &&
           u.roles.some((role) =>
@@ -68,9 +50,7 @@ export function registerJobPages(
           })),
           next_cursor:
             rows.length > p.limit && last
-              ? Buffer.from(
-                  JSON.stringify({ time: last.cursor_time, id: last.id }),
-                ).toString("base64url")
+              ? encodeHistoryCursor(last.cursor_time, last.id)
               : null,
         };
       },

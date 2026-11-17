@@ -27,6 +27,28 @@ export type SyntheticJobInput = {
   iterations: number;
   timeout_seconds?: number;
 };
+export type UsageRecord = {
+  id: string;
+  job_id: string;
+  attempt_id: string;
+  device_id: string;
+  session_id: string;
+  output_verified: true;
+  logical_iterations: number;
+  cpu_usage_usec: string | null;
+  memory_peak_bytes: string | null;
+  server_elapsed_usec: string;
+  telemetry_status: "NOT_REPORTED" | "REPORTED_UNTRUSTED" | "REJECTED";
+  rejection_reason: string | null;
+  policy_snapshot: {
+    cpu_percent: number;
+    memory_mb: number;
+    gpu_enabled: false;
+    idle_only: false;
+  };
+  observed_at: string;
+};
+export type UsagePage = { records: UsageRecord[]; next_cursor: string | null };
 export class OpenComputeError extends Error {
   constructor(
     public readonly status: number,
@@ -113,16 +135,22 @@ export class OpenComputeClient {
   cancelJob(id: string): Promise<{ canceled: boolean }> {
     return this.request(`/v1/jobs/${encodeURIComponent(id)}/cancel`, "POST");
   }
-  private page(path: string, options: PageOptions): Promise<JobPage> {
+  private page<T>(path: string, options: PageOptions): Promise<T> {
     const query = new URLSearchParams();
     if (options.limit !== undefined) query.set("limit", String(options.limit));
     if (options.cursor !== undefined) query.set("cursor", options.cursor);
     return this.request(path + (query.size ? "?" + query.toString() : ""));
   }
   listJobs(options: PageOptions = {}): Promise<JobPage> {
-    return this.page("/v1/operator/jobs", options);
+    return this.page<JobPage>("/v1/operator/jobs", options);
   }
   listContributorJobs(options: PageOptions = {}): Promise<JobPage> {
-    return this.page("/v1/contributor/jobs", options);
+    return this.page<JobPage>("/v1/contributor/jobs", options);
+  }
+  listUsage(options: PageOptions = {}): Promise<UsagePage> {
+    return this.page<UsagePage>("/v1/operator/usage", options);
+  }
+  listContributorUsage(options: PageOptions = {}): Promise<UsagePage> {
+    return this.page<UsagePage>("/v1/contributor/usage", options);
   }
 }

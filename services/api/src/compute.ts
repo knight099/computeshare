@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type pg from "pg";
+import { recordUsage, registerUsage } from "./usage.ts";
 import { reserveJob, requestedOffer } from "./scheduling.ts";
 import { HashVerifier } from "./verifier.ts";
 import { registerJobPages } from "./job-pages.ts";
@@ -58,6 +59,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
   const verifier = new HashVerifier();
   app.addHook("onClose", () => verifier.close());
   registerJobPages(app, pool, auth.user);
+  registerUsage(app, pool, auth.user);
   async function event(
     c: pg.PoolClient,
     job: string,
@@ -401,6 +403,8 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
                   next === "VERIFIED" ? m.attempt.result : null,
                 ],
               );
+            if (next === "VERIFIED")
+              await recordUsage(c, a.id, m.attempt.usage);
           }
         }
       }

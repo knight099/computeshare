@@ -95,6 +95,28 @@ export async function verifyCompute({ base, headers, dashboard }) {
         throw Error("100-job completion deadline exceeded");
       await new Promise((r) => setTimeout(r, 1000));
     }
+    const usageResponse = await fetch(base + "/v1/operator/usage?limit=200", {
+      headers,
+    });
+    assert.equal(usageResponse.status, 200);
+    const usage = (await usageResponse.json()).records.filter((r) =>
+      ids.has(r.job_id),
+    );
+    assert.equal(usage.length, 100);
+    assert.equal(new Set(usage.map((r) => r.attempt_id)).size, 100);
+    for (const record of usage) {
+      assert.equal(record.output_verified, true);
+      assert.equal(record.logical_iterations, 1000);
+      assert.equal(record.telemetry_status, "REPORTED_UNTRUSTED");
+      assert(BigInt(record.cpu_usage_usec) > 0n);
+      assert(
+        BigInt(record.memory_peak_bytes) > 0n &&
+          BigInt(record.memory_peak_bytes) <= 64n * 1024n * 1024n,
+      );
+    }
+    console.log(
+      "PASS: 100 unique durable usage records, verified outputs and explicitly untrusted bounded telemetry",
+    );
     const completed = await until(async () => {
       const s = await state();
       return s.last_result.memory_peak_bytes > 0 ? s : false;
