@@ -26,6 +26,16 @@ Last updated: 2026-11-17. Owner authorized merge and continued work on main. Sco
 
 Separate hash implementations are required cross-language verification boundaries; they must share known vectors. Test fixtures are not alternate domain implementations.
 
+## Windows/Linux platform owners
+
+- Shared identity, proof, wire protocol, session state, Stop and dashboard remain in the existing Go agent.
+- `platform_linux.go` / `platform_windows.go`: inventory and lifetime clock.
+- `storage_linux.go` / `storage_windows.go`: private state; Windows DPAPI and validated owner/DACL policy.
+- `session_lock_linux.go` / `session_lock_windows.go`: interprocess session lock.
+- `runtime_linux.go` / `runtime_windows.go`: execution availability, worker launch/status and direct-worker entry gate. Windows execution is disabled.
+- `supervision.go` is Linux-only. Windows resource/supervisor enforcement must have its own tested backend before enabling work.
+- [Host support matrix](host-support.md) records the Windows and Linux production gates. Keep this index current before adding another OS-specific implementation.
+
 ## Quality and efficiency register
 
 | Concern                    | Rule / present evidence                                                                                   | Remaining work                                                                                       |
@@ -78,8 +88,16 @@ Next task must re-read this tracker: scheduler, SDK, usage, bounded retries and 
 
 Revocation task: regression demonstrated an ACTIVE session after device revocation. Fixed by acquiring the existing compute lock before the device row and reusing the single session Stop implementation inside the revocation transaction. Active attempts are canceled and opted-in company retries remain fenced; credentials and audit commit atomically. Control mutations recheck live device status under lock. Regression RED→GREEN; all 25 integration tests, lint/typecheck passed; focused review found no findings. No duplicate session cancellation or retry implementation added.
 
-Current checkpoint: retries passed source/Compose CI 44182487190. Revocation source and full Compose run 44182919710 passed. Removed financial feature wording from the contributor disclosure; payments remain outside scope. First-production host OS requirements have been asked of the owner; do independent work while awaiting that answer and keep unsupported platforms disabled.
+Current checkpoint: retries passed source/Compose CI 44182487190. Revocation source and full Compose run 44182919710 passed. Removed financial feature wording from the contributor disclosure; payments remain outside scope. Owner selected Windows and Linux for the first production release; macOS is deferred. Keep unsupported execution disabled.
 
 Documentation audit: superseded the old financial ADR with technical usage semantics, corrected the old NATS-dispatch description, and updated contributor enrollment/sharing disclosures. Historical master-plan financial sections remain explicitly superseded by current product scope. No new implementation or duplicated service was introduced.
 
 Verified checkpoint: main5ec9e59 passed source and Compose CI44182919710; later changes align documentation/disclosure text only. Repository is clean after each push. Remaining platform/runtime, artifact, signing/distribution, observability/restore and scale gates are still open; no enterprise-ready completion claim.
+
+Windows/Linux task (owner decision 2026-11-17): first extract existing Linux-specific secure storage, hardware/clock, file locking and runtime behind build-tagged functions. Reuse all protocol, identity, session and dashboard logic. Add Windows native CI, per-user protected storage and enrollment/connectivity tests. Windows execution remains fail-closed until Job Object resource enforcement/parent-death behavior and native acceptance pass; general workloads retain independent isolation review. No duplicated control plane, scheduler or session model.
+
+Windows foundation implementation: extracted Linux-specific storage/locking/inventory/clock/cgroup/worker status; shared consent, protocol, proof, session manager and dashboard retained. Windows adds current-user DPAPI, protected user/SYSTEM DACLs set on creation, validation of existing file/directory/lock ACLs without modification, final/intermediate reparse rejection and native locking. Secret readers allow atomic replacement; lock handles keep replacement forbidden. Windows direct worker entry is rejected and no runtime is advertised. Added native Windows CI and HTTP enrollment/device-proof fixture tests (not real IdP acceptance). Linux race suite passed after extraction and review fixes; Windows amd64 cross-compile/static verification passed before final review fixes, repeating now. Native CI remains pending; do not claim production Windows support.
+
+Review fix evidence: review identified unsafe existing-directory ACL replacement, broad file ACL acceptance and concurrent reader blocking atomic writes. Added native regressions before fixes; these cannot execute on this Linux host and require Windows CI. Removed permission rewriting, validated private ACLs by handle, shared-delete only on readers, retained lock-file identity, gated direct Windows worker invocation. Added trusted-parent requirement and junction tests. Linux ownership validation now matches the CLI contract. No fabricated native test result or Windows resource-isolation claim.
+
+Final local platform checks: Linux race tests passed after all shared/Linux changes; Windows amd64 test binary and Windows-targeted vet passed after ACL/share/worker-gate fixes; Node lint/format/typecheck passed. Native Windows regressions are committed for actual CI execution, not represented as locally executed. Only named task-generated Go build caches were removed to stay within the 8 GB workspace; no application data or unrelated Docker resources were deleted.

@@ -22,4 +22,4 @@ Payments, wallets, prices, billing, credit balances, earnings, payouts, financia
 
 A usable release needs supported workload and OS matrices, reproducible installation, consent/Stop guarantees, tested resource isolation, two independent company deployments, scoped APIs/SDK, resilient scheduling, idempotent usage, restore/upgrade tests and published performance/failure results. Enterprise readiness requires evidence against declared workloads and deployment limits, not a promise that every company or workload is supported.
 
-Initial supported execution remains the bounded Linux CPU hash worker. Windows/macOS, general workloads and GPUs are planned, unsupported until individually implemented and verified. Do not advertise them as available.
+First production contributor targets, chosen by the owner on 2026-11-17: **Windows and Linux**. macOS is outside the first production release. Current verified execution remains the bounded Linux CPU hash worker; Windows must pass native identity/storage/session/runtime/installer acceptance before being advertised as supported. General workloads and GPUs remain disabled until implemented, verified and independently reviewed.

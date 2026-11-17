@@ -24,7 +24,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -67,40 +66,6 @@ func validateGateway(raw string) (string, error) {
 		return "", errors.New("HTTPS required except on loopback for local development")
 	}
 	return strings.TrimSuffix(u.String(), "/"), nil
-}
-func readSecret(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !st.Mode().IsRegular() || st.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("state must be a regular private file (0600)")
-	}
-	return io.ReadAll(io.LimitReader(f, 65536))
-}
-func writeSecret(path string, data []byte) error {
-	if st, err := os.Lstat(path); err == nil && (!st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0) {
-		return errors.New("refusing non-regular state file")
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".state-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if _, err = tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
 }
 func save(path string, value interface{}) error {
 	b, err := json.Marshal(value)
@@ -155,27 +120,6 @@ func randomString() string {
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
-}
-func capabilities() (Capabilities, error) {
-	if runtime.GOOS != "linux" {
-		return Capabilities{}, errors.New("this release supports Linux enrollment only")
-	}
-	b, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return Capabilities{}, errors.New("cannot detect memory")
-	}
-	var memory int64
-	for _, line := range strings.Split(string(b), "\n") {
-		f := strings.Fields(line)
-		if len(f) >= 2 && f[0] == "MemTotal:" {
-			memory, _ = strconv.ParseInt(f[1], 10, 64)
-			memory /= 1024
-		}
-	}
-	if memory < 1 {
-		return Capabilities{}, errors.New("invalid memory capability")
-	}
-	return Capabilities{OS: runtime.GOOS, Arch: runtime.GOARCH, CPU: runtime.NumCPU(), Memory: memory, Version: "0.1.0", Runtimes: []string{}}, nil
 }
 func login(ctx context.Context, gateway, dir string) error {
 	var config Config
@@ -373,8 +317,8 @@ func run(ctx context.Context, dir string, port int) error {
 		return err
 	}
 	defer manager.stopLocal("STOPPED")
-	if _, e := cleanupStaleCgroups(manager.root); e != nil {
-		log.Println("Stale cgroup cleanup incomplete; populated groups preserved")
+	if _, e := cleanupStaleWorkloads(manager.root); e != nil {
+		log.Println("Stale workload cleanup incomplete; active groups preserved")
 	}
 	go manager.watch(ctx)
 	closeDashboard, err := startDashboard(ctx, manager, port)
@@ -413,7 +357,7 @@ func main() {
 		os.Exit(2)
 	}
 	if os.Args[1] == "internal-hash-worker" {
-		if err := hashWorker(); err != nil {
+		if err := internalHashWorker(); err != nil {
 			os.Exit(1)
 		}
 		return
@@ -421,7 +365,7 @@ func main() {
 	flags := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	port := flags.Int("dashboard-port", 8788, "loopback contributor dashboard port (0 for a random free port)")
 	gateway := flags.String("gateway", "http://localhost:8080", "company gateway origin")
-	name := flags.String("name", "linux-device", "device display name")
+	name := flags.String("name", runtime.GOOS+"-device", "device display name")
 	accepted := flags.Bool("accept-consent", false, "explicitly accept disclosed enrollment telemetry; no compute runs")
 	home, err := os.UserConfigDir()
 	if err != nil {
@@ -429,12 +373,8 @@ func main() {
 	}
 	dir := flags.String("state-dir", filepath.Join(home, "opencompute"), "private local state directory")
 	_ = flags.Parse(os.Args[2:])
-	if err = os.MkdirAll(*dir, 0700); err != nil {
-		log.Fatal("Cannot create local state directory")
-	}
-	st, err := os.Lstat(*dir)
-	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm()&0077 != 0 {
-		log.Fatal("State directory must be private (0700) and not a symlink")
+	if err = prepareStateDirectory(*dir); err != nil {
+		log.Fatal("State directory must be private and owned by the current user")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

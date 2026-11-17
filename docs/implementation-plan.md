@@ -28,6 +28,10 @@ Historical source: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). 
 - [x] Scheduled credential/challenge retention, atomic capability-change snapshots, and documented manual key replacement.
 - [ ] Follow-up: administrator-assisted revocation/key rotation and production proxy/IPv6/CGNAT matrix.
 
+## Production host targets
+
+Windows and Linux, selected by the owner on 2026-11-17. macOS is deferred. Track platform acceptance separately: a cross-compiled binary is not proof of secure storage, consent, expiry, resource enforcement, process termination or signed installation.
+
 ## M2 — Contributor sessions and safe compute
 
 Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. The CPU slice and hardening passed source and full-stack CI on aba2355 (run 44175864569), including browser controls, 100 constrained jobs and Stop during a network partition. Artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.

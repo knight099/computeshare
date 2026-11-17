@@ -52,6 +52,7 @@ See [verification evidence](docs/verification.md) for what was actually run and 
 
 The Company Platform and Contributor Application are independently deployable products. A modular Fastify API owns identity/device domains, PostgreSQL owns durable state, and the Go agent connects outbound. The Next.js console includes scoped device/job views. The Go agent serves its contributor controls on loopback, keeping Stop independent of company connectivity. Expanded policy adapters, resilient scheduling, isolation and verified usage remain tracked stages. Companies own their payment and business systems outside the framework.
 
+- [Windows/Linux host support and acceptance gates](docs/host-support.md)
 - [Current core technology scope](docs/product-scope.md)
 - [Engineering tracker — read before implementation](docs/engineering-tracker.md)
 - [Master product specification](OPENCOMPUTE_MASTER_BUILD_PLAN.md)

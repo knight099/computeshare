@@ -41,6 +41,22 @@ jobs:
       - run: cd agents/node-agent && go vet ./...
       - run: cd services/scheduler && go vet ./...
       - run: test -z "$(gofmt -l agents/node-agent services/scheduler)"
+  windows-agent:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: agents/node-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: agents/node-agent/go.sum
+      - name: Native Windows storage, locking, identity and fail-closed tests
+        run: go test -count=1 ./...
+      - run: go vet ./...
+      - run: go build -trimpath -o ../../bin/opencompute-agent-windows-amd64.exe .
   compose-acceptance:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

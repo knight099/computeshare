@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -29,7 +31,7 @@ func runParentBound(cmd *exec.Cmd, setup func(*os.Process) error) error {
 
 var ownedGroupName = regexp.MustCompile(`^job-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-func cleanupStaleCgroups(root string) (int, error) {
+func cleanupStaleWorkloads(root string) (int, error) {
 	if !executionAvailable(root) {
 		return 0, nil
 	}

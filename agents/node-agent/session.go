@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,22 +22,6 @@ type LocalSession struct {
 
 func (s LocalSession) live(boot string, uptime float64, now time.Time) bool {
 	return s.Status == "ACTIVE" && s.BootID == boot && uptime < s.ExpiresBoot && now.Before(s.ExpiresAt)
-}
-func bootClock() (string, float64, error) {
-	id, e := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if e != nil {
-		return "", 0, e
-	}
-	data, e := os.ReadFile("/proc/uptime")
-	if e != nil {
-		return "", 0, e
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 1 {
-		return "", 0, errors.New("boot clock unavailable")
-	}
-	up, e := strconv.ParseFloat(fields[0], 64)
-	return strings.TrimSpace(string(id)), up, e
 }
 
 type SessionManager struct {
@@ -189,7 +172,7 @@ func (m *SessionManager) start(ctx context.Context, b StartSharing) error {
 		return errors.New("unsupported availability duration")
 	}
 	if !executionAvailable(m.root) {
-		return errors.New("execution disabled: delegated cgroup v2 CPU/memory/pids limits required")
+		return errors.New("execution disabled: " + runtimeUnavailableReason())
 	}
 	boot, up, e := bootClock()
 	if e != nil {

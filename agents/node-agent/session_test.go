@@ -21,7 +21,7 @@ func TestAvailabilityUsesBootClockAndNeverExtendsAfterWallClockRollback(t *testi
 }
 func TestStopCancelsLocalExecutionWithoutNetwork(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &SessionManager{dir: t.TempDir(), session: LocalSession{ID: "test-session", Status: "ACTIVE"}, cancel: cancel}
+	m := &SessionManager{dir: testStateDir(t), session: LocalSession{ID: "test-session", Status: "ACTIVE"}, cancel: cancel}
 	m.stopLocal("STOPPED")
 	select {
 	case <-ctx.Done():
@@ -54,7 +54,7 @@ func TestSyntheticKnownVector(t *testing.T) {
 func TestExpiredSessionCancelsOfflineAndCannotResume(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	m := &SessionManager{dir: t.TempDir(), session: LocalSession{ID: "expired-session", Status: "ACTIVE", BootID: "old-boot", ExpiresAt: time.Now().Add(time.Hour)}, cancel: cancel}
+	m := &SessionManager{dir: testStateDir(t), session: LocalSession{ID: "expired-session", Status: "ACTIVE", BootID: "old-boot", ExpiresAt: time.Now().Add(time.Hour)}, cancel: cancel}
 	if m.snapshot().Status != "EXPIRED" {
 		t.Fatal("offline expiry not enforced")
 	}
@@ -70,7 +70,7 @@ func TestExpiredSessionCancelsOfflineAndCannotResume(t *testing.T) {
 }
 
 func TestStopWinsAgainstPendingStartAndCLIStopDuringStartup(t *testing.T) {
-	m := &SessionManager{dir: t.TempDir()}
+	m := &SessionManager{dir: testStateDir(t)}
 	gen, err := m.prepareStart("boot", 100, 21600, ResourcePolicy{CPUPercent: 25, MemoryMB: 128})
 	if err != nil {
 		t.Fatal(err)

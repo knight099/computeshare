@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -80,7 +82,7 @@ func TestStaleCleanupNeverTouchesOrdinaryDirectories(t *testing.T) {
 	if err := os.Mkdir(child, 0700); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = cleanupStaleCgroups(dir)
+	_, _ = cleanupStaleWorkloads(dir)
 	if _, err := os.Stat(child); err != nil {
 		t.Fatal("cleanup touched a directory outside cgroup v2")
 	}
