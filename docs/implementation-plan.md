@@ -28,7 +28,7 @@ Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). Th
 
 ## M2 — Contributor sessions and safe compute
 
-Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. The CPU slice passed source and full-stack CI on a996ef4 (run 43640458682), including browser controls, 100 constrained jobs and Stop during a network partition. Separate Go scheduler, TypeScript SDK/artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
+Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. The CPU slice and hardening passed source and full-stack CI on aba2355 (run 44175864569), including browser controls, 100 constrained jobs and Stop during a network partition. Separate Go scheduler, TypeScript SDK/artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
 
 - [x] Availability sessions with 1/2/4/6/8/12-hour presets, immutable policy and consent snapshots; no automatic renewal.
 - [x] Local Stop, boot-clock/offline expiry, reboot non-resumption, and connection-loss cancellation.
