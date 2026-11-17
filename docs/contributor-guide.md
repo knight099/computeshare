@@ -1,6 +1,6 @@
-# Contributor enrollment preview
+# Contributor enrollment and bounded compute preview
 
-This release registers a Linux device and reports its connectivity. It **does not execute compute**, consume a sharing session, or award credits.
+This release registers a Linux device and reports its connectivity. Enrollment alone **never starts compute**. Bounded built-in CPU work requires a separate explicitly consented sharing session with local time/resource limits and Stop controls.
 
 By enrolling, you explicitly allow your chosen operator to store your account identifier, device name, device public key, operating system, architecture, CPU count, total RAM, agent version, registration time, and heartbeat timestamps. The operator records consent and security events. No personal files, browser data, clipboard, camera, microphone, or workload execution permission is requested.
 
@@ -18,7 +18,7 @@ The default state directory is `$XDG_CONFIG_HOME/opencompute` or `~/.config/open
 
 Ctrl+C or SIGTERM stops the agent locally, including during reconnect backoff. Your operator sees offline status after the heartbeat grace period. To revoke the device, use the owner-authenticated API described in `docs/api.md`; revocation prevents reconnection and closes the current connection. Ask the operator about retained data and deletion; local key deletion alone does not remove company records.
 
-Availability, resource controls, credits, device diagnostics exports, desktop packaging and OS credential storage arrive in later stages. Enrollment is not consent to these future capabilities.
+Timed availability and CPU/RAM controls are available in the local dashboard. Broader policy controls, diagnostic exports, desktop packaging and OS-backed credential storage remain later stages. Enrollment is not consent to those capabilities. Credits, payments and business management are outside framework scope.
 
 ## M2 synthetic sharing preview
 
@@ -34,6 +34,6 @@ systemd-run --user --scope --unit=opencompute-contributor --property=Delegate=ye
 
 Open the printed `http://127.0.0.1:8788` contributor dashboard. Choose duration/limits, read the sharing disclosure, explicitly check consent, and click **Start sharing**. If delegation is unavailable, execution stays disabled; do not run the agent as root or remove limit checks as a workaround. Your operator may need to configure systemd controller delegation for your platform. The helper refuses to operate outside its dedicated `opencompute-contributor.scope`.
 
-Only built-in public deterministic hashes run. Workload inputs contain no paths, scripts, images, credentials or network destinations. CPU limit is a percentage of one worker core; RAM is the worker's hard cgroup limit, with swap disabled and process count bounded. The agent/dashboard itself has separate small overhead. Jobs are canceled on connection loss, Stop, expiry, or timeout. No credit balance or payouts are implemented.
+Only built-in public deterministic hashes run. Workload inputs contain no paths, scripts, images, credentials or network destinations. CPU limit is a percentage of one worker core; RAM is the worker's hard cgroup limit, with swap disabled and process count bounded. The agent/dashboard itself has separate small overhead. Jobs are canceled on connection loss, Stop, expiry, or timeout. The framework records technical activity and explicitly untrusted CPU/memory reports; it does not manage earnings, credit balances or payouts. Company-controlled retries may run elsewhere after local interruption, but never restart your stopped session.
 
 GPU, idle-only mode, custom disk/network workloads, battery/thermal policies and desktop installers are not enabled in this slice. Those options cannot be requested as enforced policies. Operators must not advertise this preview as a complete production resource-management or arbitrary-workload runtime.
