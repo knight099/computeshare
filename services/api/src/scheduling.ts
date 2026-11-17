@@ -82,15 +82,22 @@ export function registerScheduler(
   }
   app.get("/internal/scheduler/candidates", async (r) => {
     await authorize(r);
-    const [jobs, devices] = await Promise.all([
-      pool.query(
-        "SELECT id,created_at,timeout_seconds,1 AS cpu_cores,64 AS memory_mb FROM jobs WHERE state='QUEUED' ORDER BY created_at,id LIMIT 128",
-      ),
-      pool.query(
-        `SELECT d.id AS device_id,s.id AS session_id,r.revision,r.requested_at,1 AS cpu_cores,LEAST((d.capabilities->>'memory_mb')::integer,(s.policy_snapshot->>'memory_mb')::integer) AS memory_mb,extract(epoch FROM s.expires_at-clock_timestamp())::float AS remaining_seconds FROM ${devicesFrom} WHERE ${eligible} ORDER BY r.requested_at,d.id LIMIT 128`,
-      ),
-    ]);
-    return { jobs: jobs.rows, devices: devices.rows };
+    // Current workload requirements are uniformly one CPU / 64 MiB. Keeping
+    // the longest remaining sessions guarantees the bounded device window
+    // contains a match whenever one exists; filter jobs before their FIFO limit.
+    const { rows } = await pool.query(`WITH devices AS MATERIALIZED (
+      SELECT d.id AS device_id,s.id AS session_id,r.revision,r.requested_at,1 AS cpu_cores,
+      LEAST((d.capabilities->>'memory_mb')::integer,(s.policy_snapshot->>'memory_mb')::integer) AS memory_mb,
+      extract(epoch FROM s.expires_at-clock_timestamp())::float AS remaining_seconds
+      FROM ${devicesFrom} WHERE ${eligible}
+      ORDER BY remaining_seconds DESC,r.requested_at,d.id LIMIT 128
+    ), jobs AS (
+      SELECT j.id,j.created_at,j.timeout_seconds,1 AS cpu_cores,64 AS memory_mb
+      FROM jobs j WHERE j.state='QUEUED' AND EXISTS(SELECT 1 FROM devices d WHERE d.remaining_seconds>j.timeout_seconds+5)
+      ORDER BY j.created_at,j.id LIMIT 128
+    ) SELECT COALESCE((SELECT json_agg(j ORDER BY j.created_at,j.id) FROM jobs j),'[]'::json) AS jobs,
+      COALESCE((SELECT json_agg(d) FROM devices d),'[]'::json) AS devices`);
+    return rows[0];
   });
   app.post("/internal/scheduler/claims", async (r, reply) => {
     await authorize(r);

@@ -1086,6 +1086,24 @@ test("external scheduling requires service role, fresh intent and one atomic cla
     try {
       await frame("HELLO");
       assert.equal((await frame("WORK_REQUEST")).offer, undefined);
+      // Old incompatible queue entries must not permanently hide useful work.
+      await pool.query(
+        "INSERT INTO jobs(submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state,created_at) SELECT submitter_id,'long-prefix-'||i,'synthetic-hash-v1',payload,30,'QUEUED','2000-01-01'::timestamptz+i*interval '1 microsecond' FROM jobs CROSS JOIN generate_series(1,128) i WHERE id=$1",
+        [job.id],
+      );
+      await pool.query(
+        "UPDATE availability_sessions SET expires_at=now()+interval '20 seconds' WHERE id=$1",
+        [session.id],
+      );
+      await frame("WORK_REQUEST");
+      // A prefix of short-lived devices must not hide a usable later device.
+      await pool.query(
+        `WITH owner AS (SELECT owner_id FROM devices WHERE id=$1),
+        ds AS (INSERT INTO devices(owner_id,public_key,name,capabilities) SELECT owner_id,'scheduler-decoy-'||i,'decoy','{"cpu_cores":1,"memory_mb":64,"runtimes":["synthetic-hash-v1"]}' FROM owner CROSS JOIN generate_series(1,128) i RETURNING id),
+        ss AS (INSERT INTO availability_sessions(device_id,starts_at,expires_at,requested_duration_seconds,status,policy_snapshot,consent_version) SELECT id,now(),now()+interval '14 seconds',21600,'ACTIVE','{"memory_mb":64}','sharing-v1' FROM ds RETURNING id,device_id)
+        INSERT INTO device_work_requests(device_id,session_id,requested_at,expires_at) SELECT device_id,id,'2000-01-01',now()+interval '3 seconds' FROM ss`,
+        [device],
+      );
       const snapshot = (await candidates()).json();
       const d = snapshot.devices.find(
         (d: { device_id: string }) => d.device_id === device,
