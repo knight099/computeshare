@@ -2,7 +2,7 @@
 
 An open-source, self-hosted compute-contribution framework. Each company owns its control plane, identity provider, device fleet, policies, branding, and data.
 
-**Current release: M1 identity complete, M2 synthetic compute preview.** The platform supports OIDC/PKCE, explicit consent, public-key enrollment, outbound heartbeats, revocation, capability history and credential cleanup. The new local contributor dashboard supports timed sharing, offline Stop/expiry, constrained built-in CPU hashes, and job/result views. **No credits, arbitrary workloads, GPU execution or signed installers are implemented.** This is not production-ready.
+**Current release: M1 identity complete, M2 synthetic compute preview.** The platform supports OIDC/PKCE, explicit consent, public-key enrollment, outbound heartbeats, revocation, capability history and credential cleanup. The new local contributor dashboard supports timed sharing, offline Stop/expiry, constrained built-in CPU hashes, and job/result views. **Payments, credits and business management are outside product scope. Arbitrary workloads, GPU execution and signed installers are not implemented.** This is not production-ready.
 
 ## Run locally
 
@@ -50,8 +50,10 @@ See [verification evidence](docs/verification.md) for what was actually run and 
 
 ## Architecture and delivery
 
-The Company Platform and Contributor Application are independently deployable products. A modular Fastify API owns identity/device domains, PostgreSQL owns durable state, and the Go agent connects outbound. The Next.js console includes scoped device/job views. The Go agent serves its contributor controls on loopback, keeping Stop independent of company connectivity. Expanded policy adapters, durable scheduling, and credits remain tracked stages.
+The Company Platform and Contributor Application are independently deployable products. A modular Fastify API owns identity/device domains, PostgreSQL owns durable state, and the Go agent connects outbound. The Next.js console includes scoped device/job views. The Go agent serves its contributor controls on loopback, keeping Stop independent of company connectivity. Expanded policy adapters, resilient scheduling, isolation and verified usage remain tracked stages. Companies own their payment and business systems outside the framework.
 
+- [Current core technology scope](docs/product-scope.md)
+- [Engineering tracker — read before implementation](docs/engineering-tracker.md)
 - [Master product specification](OPENCOMPUTE_MASTER_BUILD_PLAN.md)
 - [All stages and implementation status](docs/implementation-plan.md)
 - [Architecture decisions](docs/adr/001.md)

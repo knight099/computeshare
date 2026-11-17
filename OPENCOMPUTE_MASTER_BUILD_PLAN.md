@@ -1,3 +1,5 @@
+> Scope amendment (2026-11-17): [docs/product-scope.md](docs/product-scope.md) overrides all credit, pricing, settlement, payment and business-management requirements below. Preserve technical usage verification, isolation and security gates. This original specification is retained as historical design context; use the active implementation plan and engineering tracker for delivery.
+
 # OpenCompute — Master Product Requirements & Engineering Implementation Plan
 
 **Status:** Implementation-ready architecture and phased delivery specification  

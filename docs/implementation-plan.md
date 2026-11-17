@@ -1,6 +1,8 @@
 # Full staged implementation plan
 
-Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). This checklist records delivery, not promises of completed features. Each milestone's acceptance tests must pass before advancing. M5 arbitrary-runtime enablement additionally requires independent security review.
+Current scope: [core technology only](product-scope.md), overriding historical financial requirements. Before every task, read [engineering tracker](engineering-tracker.md).
+
+Historical source: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). This checklist records delivery, not promises of completed features. Each milestone's acceptance tests must pass before advancing. M5 arbitrary-runtime enablement additionally requires independent security review.
 
 ## M0 — Foundation
 
@@ -45,24 +47,24 @@ Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR
 - [x] Initial CPU gate: six-hour session creation, 100 synthetic jobs, cgroup limits, offline Stop during partition, outbound/NAT baseline, and local boot-clock/expiry tests.
 - [ ] Full M2 gate remains open for the follow-ups above; no six-hour wall-clock soak or complete platform-policy certification claimed.
 
-## M3 — Reliability, verification and simulated credits
+## M3 — Reliability and technical usage
 
-- [ ] Durable job/attempt transitions, bounded retry/backoff, dead-letter state and lease fencing.
-- [ ] Reconnect reconciliation and immutable artifact/result association; deterministic server-owned verification vectors.
-- [ ] Evidence-based usage records, availability/allocation/execution/verified-unit separation.
-- [ ] Versioned fixed-point credit policies, balanced immutable journals, settlement uniqueness, pending/confirmed/reversal history.
-- [ ] Contributor statements and credit screens; operator policy/export and audited dual-approved adjustments.
-- [ ] Gate: worker death and reassignment, delayed/stale events, duplicates with zero duplicate settlements, invalid/forged usage rejection, ledger reconciliation, complete audit trail.
+- [ ] Fenced retries/reassignment, artifact integrity, attempt recovery and idempotent verification under duplicates, disconnects and crashes.
+- [ ] Durable usage records with job/attempt/device/session, policy version, measured/reported values, verification state and unique acceptance key.
+- [ ] Owner-scoped usage history and operator export/events; reject forged or inconsistent claims and distinguish untrusted agent telemetry.
+- [ ] Gate: worker death/reassignment, stale/reordered/duplicate events, no duplicate accepted usage, output validation, usage reconciliation and audit trail.
+
+Payments, pricing, credit ledgers and financial management are excluded; companies integrate their own systems.
 
 ## M4 — White-label products and distribution
 
-- [ ] Operator configuration/theme/logo/support/legal links/credit naming and approved-workload policy.
-- [ ] Console overview/jobs/workload policies/identity/access/credits/security administration, complete RBAC including submitter and auditor.
+- [ ] Operator configuration/theme/logo/support/legal links and approved-workload policy.
+- [ ] Console overview/jobs/workload policies/identity/access/usage/security administration, complete RBAC including submitter and auditor.
 - [ ] Contributor Tauri shell, separate installer artifacts and platform capability gating.
 - [ ] Operator-bound signed configuration/installers/manifests, update verification, release revocation, downgrade protection and rollback.
 - [ ] OS-backed credential storage, rotated device identities, company-specific signing workflow, SBOM/dependency scans and reproducibility guidance.
 - [ ] Independent Company A/B examples, account/device deletion and retention guides, download/checksum distribution.
-- [ ] Gate: separate branded deployments with distinct identities, data, keys and credit policies; tampering/retargeting rejected; no central service.
+- [ ] Gate: separate branded deployments with distinct identities, data, keys and workload policies; tampering/retargeting rejected; no central service.
 
 ## M5 — Reviewed runtime and GPU research
 
@@ -79,23 +81,23 @@ Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR
 - [ ] HA gateway/scheduler operations, shared presence/revocation, fleet rate limits, Helm/Terraform and HTTPS deployment examples.
 - [ ] OpenTelemetry, Prometheus/Grafana and structured log dashboards; retention, redacted diagnostic exports, alerts and incident response.
 - [ ] Migration/upgrade/rollback procedures, tested database/object backup and restore, release/API compatibility policies.
-- [ ] Gate: 10-node/1,000-job test with 30% interruptions, conditional ≥99% completion, zero duplicate settlements, latency/recovery/bandwidth/cost report, restored state verified.
+- [ ] Gate: 10-node/1,000-job test with 30% interruptions, conditional ≥99% completion, zero duplicate accepted usage records, latency/recovery/bandwidth/cost report, restored state verified.
 
 ## Requirements coverage
 
-| Master sections                                                  | Owning stages                                |
-| ---------------------------------------------------------------- | -------------------------------------------- |
-| 0–1: product boundaries and independent company ownership        | All; ADR-001                                 |
-| 2: onboarding, availability and all product screens              | M1–M4                                        |
-| 3–4: architecture, outbound networking, P2P and failure handling | M0–M3, M6                                    |
-| 5–6: scheduling, recovery, isolation, supply chain               | M2–M5                                        |
-| 7: metering, verification and credits                            | M3                                           |
-| 8–10: identity, white-labeling, APIs, protocol, schema           | M0–M4                                        |
-| 11–12: monorepo and stage acceptance                             | All                                          |
-| 13–15: tests, observability, self-hosting and operations         | All; scale/HA in M6                          |
-| 16–18: governance, compatibility, risks and ADRs                 | M0, M4–M6; review gates retained             |
-| 19: first autonomous delivery                                    | M0 / initial M1                              |
-| 20: two-company final demonstration                              | M4 synthetic baseline; M5/M6 gated additions |
+| Master sections                                                   | Owning stages                                |
+| ----------------------------------------------------------------- | -------------------------------------------- |
+| 0–1: product boundaries and independent company ownership         | All; ADR-001                                 |
+| 2: onboarding, availability and all product screens               | M1–M4                                        |
+| 3–4: architecture, outbound networking, P2P and failure handling  | M0–M3, M6                                    |
+| 5–6: scheduling, recovery, isolation, supply chain                | M2–M5                                        |
+| 7: technical metering and verification (financial parts excluded) | M3                                           |
+| 8–10: identity, white-labeling, APIs, protocol, schema            | M0–M4                                        |
+| 11–12: monorepo and stage acceptance                              | All                                          |
+| 13–15: tests, observability, self-hosting and operations          | All; scale/HA in M6                          |
+| 16–18: governance, compatibility, risks and ADRs                  | M0, M4–M6; review gates retained             |
+| 19: first autonomous delivery                                     | M0 / initial M1                              |
+| 20: two-company final demonstration                               | M4 synthetic baseline; M5/M6 gated additions |
 
 ## Decisions and progress ledger
 
@@ -105,14 +107,8 @@ Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR
 - Ruling: Linux enrollment only in the initial agent, with no declared executable runtime. Cost: Windows/macOS enrollment waits for tested adapters.
 - Review focus: cross-user access, revoked/expired credentials, replayed proofs/messages, state-file exposure, failure of a dependency while liveness stays healthy.
 
-## Next small delivery
+## Current execution
 
-Complete M1 browser/reconnect acceptance before starting compute: add a real-browser console sign-in test (including CORS/state failure paths), exercise agent reconnect after gateway restart, capture capability revisions, and add scheduled credential/challenge retention. Require existing source/Compose tests plus the new browser/reconnect tests to pass. Then begin M2 with locally enforced availability and Stop/expiry tests, before allowing synthetic job dispatch.
+PR #1 merged into main as 0d4c383 after head CI 44176589763 passed. Hardening implementation aba2355 passed CI 44175864569 including 100 real constrained CPU jobs, browser authentication, empty cgroup cleanup, reconnect and offline Stop. See verification evidence and engineering tracker.
 
-## Latest execution record
-
-M1 completion and initial M2 CPU slice are in PR #1. Current implementation evidence: CI 43640458682 on a996ef4, 4 unit + 19 PostgreSQL integration + 11 Go tests, production build, real Chromium/Keycloak/cgroup flow.
-
-Ruling: local Go-served contributor controls keep Stop independent of company connectivity; expanded Next.js/desktop presentation remains later. Ruling: initial FIFO/leases stay in the modular API, and one advisory transaction lock orders compute mutations; this trades throughput for simple, tested cancellation ordering. Standalone Go scheduling and durable queue delivery remain explicit follow-ups.
-
-Deferred review minors are listed in docs/verification.md and docs/threat-model.md: crash cleanup/parent-death handling, chronological history pagination, and asynchronous known-result verification.
+Continue on main with standalone authenticated Go scheduling and TypeScript SDK, then technical usage and resilience. Keep the existing API transaction authority, consent checks and lock ordering. Implement platform/runtime support only when enforceable and tested. The full project is incomplete until the remaining gates above pass; arbitrary/GPU execution additionally requires independent security review.
