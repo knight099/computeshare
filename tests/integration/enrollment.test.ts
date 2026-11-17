@@ -624,6 +624,10 @@ test(
       const a = { id: next.attempt_id, epoch: next.epoch };
       await frame("JOB_ACCEPT", { attempt: a });
       await frame("JOB_START", { attempt: a });
+      // Exercise upgrade compatibility: this job predates stored expected hashes.
+      await pool.query("UPDATE jobs SET expected_hash=NULL WHERE id=$1", [
+        job.id,
+      ]);
       const complete = {
         ...a,
         result:
@@ -906,5 +910,74 @@ test("public configuration traffic cannot exhaust authenticated users behind the
   assert.equal(
     (await app.inject({ url: "/v1/me", headers: auth(alice) })).statusCode,
     200,
+  );
+});
+
+test("contributor history is chronological and microsecond-safe across pages", async () => {
+  const owner = (
+    await pool.query("SELECT id FROM users WHERE external_subject='alice'")
+  ).rows[0].id;
+  const session = (
+    await pool.query(
+      "INSERT INTO availability_sessions(device_id,expires_at,requested_duration_seconds,status,policy_snapshot,consent_version) VALUES($1,now()+interval '1 hour',3600,'STOPPED','{}','sharing-v1') RETURNING id",
+      [device],
+    )
+  ).rows[0].id;
+  await pool.query(
+    "INSERT INTO jobs(id,submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state,created_at) SELECT ('11111111-1111-4111-8111-'||lpad(i::text,12,'0'))::uuid,$1,'history-'||i,'synthetic-hash-v1','{}',10,'SUCCEEDED','2099-01-01'::timestamptz+i*interval '1 microsecond' FROM generate_series(1,205) i",
+    [owner],
+  );
+  await pool.query(
+    "INSERT INTO job_attempts(job_id,device_id,session_id,epoch,state,lease_expires_at) SELECT id,$1,$2,1,'VERIFIED',now() FROM jobs WHERE idempotency_key LIKE 'history-%'",
+    [device, session],
+  );
+  let cursor: string | null = null;
+  const seen: string[] = [];
+  do {
+    const r: {
+      statusCode: number;
+      json: () => { jobs: { id: string }[]; next_cursor: string | null };
+    } = await app.inject({
+      url:
+        "/v1/contributor/jobs?limit=50" +
+        (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""),
+      headers: auth(alice),
+    });
+    assert.equal(r.statusCode, 200);
+    const page: { jobs: { id: string }[]; next_cursor: string | null } =
+      r.json();
+    if (!seen.length)
+      assert.equal(page.jobs[0].id, "11111111-1111-4111-8111-000000000205");
+    seen.push(...page.jobs.map((j: { id: string }) => j.id));
+    cursor = page.next_cursor;
+  } while (cursor);
+  assert.equal(new Set(seen).size, seen.length);
+  assert.equal(seen.filter((id) => id.startsWith("11111111-")).length, 205);
+  assert.equal(
+    (
+      await app.inject({
+        url: "/v1/contributor/jobs?limit=0",
+        headers: auth(alice),
+      })
+    ).statusCode,
+    400,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        url: "/v1/contributor/jobs?cursor=invalid",
+        headers: auth(alice),
+      })
+    ).statusCode,
+    400,
+  );
+  assert.deepEqual(
+    (
+      await app.inject({
+        url: "/v1/contributor/jobs?limit=50",
+        headers: auth(bob),
+      })
+    ).json().jobs,
+    [],
   );
 });

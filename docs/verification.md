@@ -30,8 +30,10 @@ M1 additions cover atomic capability-change history without unchanged-heartbeat 
 
 ## Remaining gates and review minors
 
-This is the initial M2 CPU-only vertical slice, not the complete product. Separate Go scheduling/NATS outbox delivery, SDK/artifacts, broader power/thermal/idle policies and full contributor diagnostics remain M2 follow-ups. Reliability/retries and credits are M3; signing, distribution, reviewed VM/GPU execution and P2P are later stages.
+This is the initial M2 CPU-only vertical slice, not the complete product. Separate Go scheduling, SDK/artifacts, broader power/thermal/idle policies and full contributor diagnostics remain M2 follow-ups. Reliability/retries and credits are M3; signing, distribution, reviewed VM/GPU execution and P2P are later stages.
 
-Deferred review minors: parent-death/stale-cgroup cleanup on SIGKILL, chronological contributor history beyond the 200-row preview cap, and moving bounded synchronous hash verification off the API event loop. A crashed agent's bounded trusted worker can finish under its existing cgroup limits; dedicated crash acceptance is still needed. No hostile allocator, arbitrary-code isolation, production signing, fraud-proof compute, or credit-settlement claim is made.
+The former parent-death, chronological-history and synchronous-verification review minors are addressed in the current increment. Local checks on 2026-11-17 passed strict typecheck/lint, eight Node unit tests, 21 real PostgreSQL integration tests (including real JetStream acknowledgement replay), and Go race tests including SIGKILL of a real supervising process. The outbox test injects a broker publication failure and a database acknowledgement failure, then checks retry against real JetStream; it does not claim a production network outage soak. New full-stack CI acceptance also checks cleanup of real empty owned cgroups while preserving unknown groups. Its result must be recorded after CI completes.
+
+No hostile allocator, arbitrary-code isolation, production signing, fraud-proof compute, or credit-settlement claim is made.
 
 The development storage substitution (SeaweedFS for unavailable MinIO images) remains documented in ADR-009. Earlier broad Docker cleanup was rejected by automatic review; only specifically identified task resources were cleaned up, preserving active services and data volumes.

@@ -1,3 +1,4 @@
+import { startEventOutbox } from "./outbox.ts";
 import { connect } from "nats";
 import { createClient } from "redis";
 import { loadConfig } from "../../../packages/config/src/index.ts";
@@ -22,7 +23,7 @@ const app = await buildApp(config, {
     const probes = await Promise.allSettled([
       pool
         .query(
-          "SELECT 1 FROM schema_migrations s CROSS JOIN operators_config o WHERE s.version=2 AND o.operator_id=$1",
+          "SELECT 1 FROM schema_migrations s CROSS JOIN operators_config o WHERE s.version=3 AND o.operator_id=$1",
           [config.OPERATOR_ID],
         )
         .then((r) => {
@@ -75,7 +76,15 @@ const stopMaintenance = startAuthMaintenance(pool, () =>
 const stopComputeMaintenance = startComputeMaintenance(pool, () =>
   app.log.warn({ event: "COMPUTE_EXPIRY_FAILED" }, "Compute expiry will retry"),
 );
+const stopOutbox = startEventOutbox(
+  pool,
+  config.NATS_URL,
+  config.OPERATOR_ID,
+  () =>
+    app.log.warn({ event: "EVENT_OUTBOX_RETRY" }, "Event delivery will retry"),
+);
 app.addHook("onClose", async () => {
+  await stopOutbox();
   await stopComputeMaintenance();
   await stopMaintenance();
   if (redis.isOpen) redis.destroy();

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type pg from "pg";
-import { createHash } from "node:crypto";
+import { HashVerifier } from "./verifier.ts";
+import { registerJobPages } from "./job-pages.ts";
 import { z } from "zod";
 import type { ControlMessage } from "../../../packages/protocol/src/index.ts";
 import { HttpError, requireRole } from "./auth.ts";
@@ -43,12 +44,6 @@ const jobSchema = z
     timeout_seconds: z.number().int().min(1).max(30).default(10),
   })
   .strict();
-export function syntheticHash(seed: string, iterations: number) {
-  let data: Uint8Array = Buffer.from(seed);
-  for (let i = 0; i < iterations; i++)
-    data = createHash("sha256").update(data).digest();
-  return Buffer.from(data).toString("hex");
-}
 type User = { id: string; subject: string; roles: string[] };
 type Auth = {
   pool: pg.Pool;
@@ -58,6 +53,9 @@ type Auth = {
 
 export function registerCompute(app: FastifyInstance, auth: Auth) {
   const { pool } = auth;
+  const verifier = new HashVerifier();
+  app.addHook("onClose", () => verifier.close());
+  registerJobPages(app, pool, auth.user);
   async function event(
     c: pg.PoolClient,
     job: string,
@@ -196,13 +194,39 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
     requireRole(u, ["operator_admin", "workload_submitter"]);
     const b = jobSchema.parse(r.body);
     const payload = { seed: b.seed, iterations: b.iterations };
+    const known = (
+      await pool.query(
+        "SELECT * FROM jobs WHERE submitter_id=$1 AND idempotency_key=$2",
+        [u.id, b.idempotency_key],
+      )
+    ).rows[0];
+    if (known) {
+      if (
+        known.payload.seed !== b.seed ||
+        known.payload.iterations !== b.iterations ||
+        known.timeout_seconds !== b.timeout_seconds
+      )
+        throw new HttpError(
+          409,
+          "Idempotency key already used for different input",
+        );
+      return reply.code(200).send(known);
+    }
+    const expected = await verifier.compute(b.seed, b.iterations);
     const c = await pool.connect();
     try {
       await c.query("BEGIN");
       await lockCompute(c);
       let { rows } = await c.query(
-        "INSERT INTO jobs(submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state) VALUES($1,$2,$3,$4,$5,'QUEUED') ON CONFLICT(submitter_id,idempotency_key) DO NOTHING RETURNING *",
-        [u.id, b.idempotency_key, b.workload_type, payload, b.timeout_seconds],
+        "INSERT INTO jobs(submitter_id,idempotency_key,workload_type,payload,timeout_seconds,state,expected_hash) VALUES($1,$2,$3,$4,$5,'QUEUED',$6) ON CONFLICT(submitter_id,idempotency_key) DO NOTHING RETURNING *",
+        [
+          u.id,
+          b.idempotency_key,
+          b.workload_type,
+          payload,
+          b.timeout_seconds,
+          expected,
+        ],
       );
       const created = Boolean(rows.length);
       if (!created) {
@@ -230,39 +254,6 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
     } finally {
       c.release();
     }
-  });
-  app.get("/v1/contributor/jobs", async (r) => {
-    const u = await auth.user(r);
-    return {
-      jobs: (
-        await pool.query(
-          "SELECT DISTINCT ON (j.id) j.id,j.workload_type,j.state,j.created_at,j.result_hash FROM jobs j JOIN job_attempts a ON a.job_id=j.id JOIN devices d ON d.id=a.device_id WHERE d.owner_id=$1 ORDER BY j.id,a.epoch DESC LIMIT 200",
-          [u.id],
-        )
-      ).rows,
-    };
-  });
-  app.get("/v1/operator/jobs", async (r) => {
-    const u = await auth.user(r);
-    requireRole(u, [
-      "operator_admin",
-      "operator_support",
-      "auditor",
-      "workload_submitter",
-    ]);
-    return {
-      jobs: (
-        await pool.query(
-          "SELECT id,workload_type,state,created_at,result_hash FROM jobs WHERE $1 OR submitter_id=$2 ORDER BY created_at DESC LIMIT 200",
-          [
-            u.roles.some((r) =>
-              ["operator_admin", "operator_support", "auditor"].includes(r),
-            ),
-            u.id,
-          ],
-        )
-      ).rows,
-    };
   });
   app.get("/v1/jobs/:id", async (r) => {
     const u = await auth.user(r);
@@ -327,6 +318,20 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
     device: string,
     m: ControlMessage,
   ): Promise<Record<string, unknown>> {
+    let legacyExpected: string | undefined;
+    if (m.type === "JOB_COMPLETE" && m.attempt) {
+      const prior = (
+        await pool.query(
+          "SELECT j.payload,j.expected_hash FROM job_attempts a JOIN jobs j ON j.id=a.job_id JOIN availability_sessions s ON s.id=a.session_id WHERE a.id=$1 AND a.device_id=$2 AND a.epoch=$3 AND a.state IN ('OFFERED','ACCEPTED','RUNNING') AND j.state='RUNNING' AND a.lease_expires_at>clock_timestamp() AND s.status='ACTIVE' AND s.expires_at>clock_timestamp()",
+          [m.attempt.id, device, m.attempt.epoch],
+        )
+      ).rows[0];
+      if (prior && !prior.expected_hash)
+        legacyExpected = await verifier.compute(
+          prior.payload.seed,
+          prior.payload.iterations,
+        );
+    }
     const c = await pool.connect();
     try {
       await c.query("BEGIN");
@@ -355,7 +360,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       if (m.attempt) {
         const a = (
           await c.query(
-            "SELECT a.*,j.payload,j.state AS job_state FROM job_attempts a JOIN jobs j ON j.id=a.job_id JOIN availability_sessions s ON s.id=a.session_id WHERE a.id=$1 AND a.device_id=$2 AND a.epoch=$3 AND a.lease_expires_at>clock_timestamp() AND s.status='ACTIVE' AND s.expires_at>clock_timestamp() FOR UPDATE OF a",
+            "SELECT a.*,j.payload,j.expected_hash,j.state AS job_state FROM job_attempts a JOIN jobs j ON j.id=a.job_id JOIN availability_sessions s ON s.id=a.session_id WHERE a.id=$1 AND a.device_id=$2 AND a.epoch=$3 AND a.lease_expires_at>clock_timestamp() AND s.status='ACTIVE' AND s.expires_at>clock_timestamp() FOR UPDATE OF a",
             [m.attempt.id, device, m.attempt.epoch],
           )
         ).rows[0];
@@ -374,8 +379,7 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
           if (m.type === "JOB_FAIL") next = "FAILED";
           if (m.type === "JOB_COMPLETE" && a.state === "RUNNING")
             next =
-              m.attempt.result ===
-              syntheticHash(a.payload.seed, a.payload.iterations)
+              m.attempt.result === (a.expected_hash ?? legacyExpected)
                 ? "VERIFIED"
                 : "FAILED";
           if (next) {

@@ -1,5 +1,5 @@
 // Real Keycloak -> native CLI PKCE -> API -> PostgreSQL -> gateway acceptance.
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, mkdtemp, rm, mkdir, access, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -165,7 +165,30 @@ try {
     ]),
   );
   const device = JSON.parse(await readFile(join(dir, "device.json"), "utf8"));
+  const cgroupRoot = process.env.OPENCOMPUTE_CGROUP_ROOT;
+  assert(cgroupRoot, "real delegated cgroup root required");
+  const staleGroup = join(
+    cgroupRoot,
+    "job-11111111-1111-4111-8111-111111111111",
+  );
+  const unknownGroup = join(cgroupRoot, "unowned-acceptance");
+  await mkdir(staleGroup);
+  await mkdir(unknownGroup);
   const runner = command(["run", "--state-dir", dir]);
+  await until(async () => {
+    try {
+      await access(staleGroup);
+      return false;
+    } catch (error) {
+      if (error.code === "ENOENT") return true;
+      throw error;
+    }
+  });
+  await access(unknownGroup);
+  await rmdir(unknownGroup);
+  console.log(
+    "PASS: startup removes empty owned cgroups and preserves unknown groups",
+  );
   const headers = { Authorization: `Bearer ${credentials.access_token}` };
   await until(async () => {
     const fleet = await json(base + "/v1/operator/devices", { headers });

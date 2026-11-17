@@ -373,6 +373,9 @@ func run(ctx context.Context, dir string, port int) error {
 		return err
 	}
 	defer manager.stopLocal("STOPPED")
+	if _, e := cleanupStaleCgroups(manager.root); e != nil {
+		log.Println("Stale cgroup cleanup incomplete; populated groups preserved")
+	}
 	go manager.watch(ctx)
 	closeDashboard, err := startDashboard(ctx, manager, port)
 	if err != nil {

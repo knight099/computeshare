@@ -1,6 +1,6 @@
 # API v1 and protocol
 
-This is the M0/M1 interface. Unimplemented endpoints in the master specification are future work and are not exposed as successful mocks. See `docs/openapi.json` for the initial OpenAPI contract.
+This documents the M0/M1 interface and CPU-only M2 preview. Unimplemented endpoints in the master specification are future work and are not exposed as successful mocks. See `docs/openapi.json` for the initial OpenAPI contract.
 
 | Method / path                    | Authentication             | Behavior                                                                               |
 | -------------------------------- | -------------------------- | -------------------------------------------------------------------------------------- |
@@ -25,7 +25,7 @@ Capabilities: `os` (`linux`, `windows`, `darwin`), `arch`, integer `cpu_cores`, 
 
 WebSocket messages use `{protocol_version:1,type,device_id,sequence,trace_id,capabilities?}`. Send `HELLO` with capabilities first, then `HEARTBEAT` every 15 seconds. Sequence must strictly increase on each connection; device ID must match the credential. The server returns `ACK` with matching sequence/trace plus UTC server time. Unknown fields/versions, replay, wrong identity, revoked/expired credentials, or missing heartbeat close the connection. Reconnect with a new challenge/credential and HELLO; the local agent adds exponential backoff/jitter.
 
-Errors: 400 validation, 401 authentication, 403 consent/role, 404 absent or unowned device, 409 duplicate key, 429 rate limit, 500 redacted internal failure. Errors include a request trace ID. The gateway intentionally has no job/control execution messages enabled yet.
+Errors: 400 validation, 401 authentication, 403 consent/role, 404 absent or unowned device, 409 duplicate key, 429 rate limit, 500 redacted internal failure. Errors include a request trace ID. CPU-only job/control additions are described below.
 
 ## M2 synthetic compute additions
 
@@ -34,3 +34,9 @@ Errors: 400 validation, 401 authentication, 403 consent/role, 404 absent or unow
 - `GET /v1/jobs/{id}`, POST `/v1/jobs/{id}/cancel`, GET `/v1/operator/jobs` and GET `/v1/contributor/jobs` expose scoped lifecycle/result metadata. Contributor history contains no input payload. Credits remain unimplemented.
 - Control messages add `WORK_REQUEST`, `JOB_ACCEPT`, `JOB_START`, `JOB_COMPLETE`, `JOB_FAIL`, optional `session:{id,status}` and `attempt:{id,epoch,result?}`. ACK may include an `offer`, `cancel_attempt_id`, or validated `job_state`. The agent must locally approve the matching session and enforce its own limits before starting. No arbitrary command or artifact appears in this protocol.
 - Offers have a 30-second fenced lease bounded by session expiry. This slice fails lost attempts rather than automatically retrying; durable retry/queue delivery is subsequent work. Completion is verified against the server-computed known hash. At-most-one active attempt per device and at-most-one active availability session are database constraints.
+
+Job lists accept `limit=1..200` (default 200) and an opaque `cursor`, and return `{jobs,next_cursor}`. Pass `next_cursor` unchanged until it is null. Both lists sort newest first by creation time and job ID; cursors preserve PostgreSQL microseconds. Authorization is reapplied to every page. New jobs may appear before the current page during concurrent submission. Contributor history excludes input payloads.
+
+Submission performs bounded asynchronous verification before opening its transaction. A saturated, failed or timed-out verifier returns 503; clients may retry with the **same** idempotency key. A duplicate of an already committed job bypasses verification.
+
+Job events are durably captured into the database outbox and published on `opencompute.{operator_uuid}.jobs.events` in JetStream stream `OC_{operator_uuid_without_hyphens}`. Metadata includes `protocol_version`, string `event_id`, `job_id`, optional `attempt_id`, `state`, `trace_id`, and `occurred_at`; workload seeds and credentials are excluded. Delivery is at least once and can reorder: consumers must deduplicate by operator/event ID and consult authoritative job state when needed. This stream does not yet dispatch work or award credits.

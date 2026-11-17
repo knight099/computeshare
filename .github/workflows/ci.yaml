@@ -31,6 +31,8 @@ jobs:
           cache-dependency-path: agents/node-agent/go.sum
       - run: pnpm install --frozen-lockfile
       - run: make lint typecheck test build
+      - name: Start JetStream for outbox integration
+        run: docker run -d --name opencompute-test-nats -p 127.0.0.1:4222:4222 nats:2.11.9-alpine -js -sd /data
       - run: make test-integration
         env:
           TEST_DATABASE_URL: postgres://test:integration-only-not-a-production-secret@localhost:5432/test

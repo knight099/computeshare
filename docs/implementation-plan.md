@@ -28,7 +28,7 @@ Source of truth: [master specification](../OPENCOMPUTE_MASTER_BUILD_PLAN.md). Th
 
 ## M2 — Contributor sessions and safe compute
 
-Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. The CPU slice passed source and full-stack CI on a996ef4 (run 43640458682), including browser controls, 100 constrained jobs and Stop during a network partition. Separate Go scheduler/NATS outbox, TypeScript SDK/artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
+Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR-011. The CPU slice passed source and full-stack CI on a996ef4 (run 43640458682), including browser controls, 100 constrained jobs and Stop during a network partition. Separate Go scheduler, TypeScript SDK/artifacts, full policy adapters, diagnostics and complete screen coverage remain follow-ups.
 
 - [x] Availability sessions with 1/2/4/6/8/12-hour presets, immutable policy and consent snapshots; no automatic renewal.
 - [x] Local Stop, boot-clock/offline expiry, reboot non-resumption, and connection-loss cancellation.
@@ -38,7 +38,9 @@ Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR
 - [ ] Go scheduler: deterministic eligibility, remaining-time safety margin, atomic capacity reservation, offer/accept/reject, leases and epochs.
 - [x] Allowlisted bounded public CPU hash worker; no scripts, arbitrary binaries, shell commands, images or GPU access.
 - [ ] Additional reviewed public-data transforms.
-- [ ] Versioned job API, SDK, artifact integrity and result interfaces; transactional outbox into durable events.
+- [x] Transactional job-event outbox with leased delivery into operator-scoped durable JetStream events; stable message IDs, bounded stream retention and retry after failures.
+- [x] Parent-death worker termination, empty owned-cgroup cleanup, scoped chronological history pagination, bounded verification outside the API event loop and compute transaction locks.
+- [ ] TypeScript SDK, artifact integrity and expanded result interfaces.
 - [ ] Contributor Home/settings/jobs/activity/diagnostics/privacy screens, resource telemetry and redacted job history.
 - [x] Initial CPU gate: six-hour session creation, 100 synthetic jobs, cgroup limits, offline Stop during partition, outbound/NAT baseline, and local boot-clock/expiry tests.
 - [ ] Full M2 gate remains open for the follow-ups above; no six-hour wall-clock soak or complete platform-policy certification claimed.

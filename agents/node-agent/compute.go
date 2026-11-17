@@ -147,23 +147,14 @@ func runLimited(ctx context.Context, root string, job HashJob, policy ResourcePo
 	}
 	var output bytes.Buffer
 	cmd.Stdout = &output
-	if err = cmd.Start(); err != nil {
-		input.Close()
-		return WorkResult{}, errors.New("cannot start trusted worker")
-	}
-	// Worker blocks on stdin until it has joined the constrained cgroup.
-	if err = os.WriteFile(filepath.Join(group, "cgroup.procs"), []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
-		input.Close()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return WorkResult{}, errors.New("cannot attach worker to cgroup")
-	}
-	err = json.NewEncoder(input).Encode(job)
-	input.Close()
+	err = runParentBound(cmd, func(process *os.Process) error {
+		defer input.Close()
+		if e := os.WriteFile(filepath.Join(group, "cgroup.procs"), []byte(strconv.Itoa(process.Pid)), 0600); e != nil {
+			return errors.New("cannot attach worker to cgroup")
+		}
+		return json.NewEncoder(input).Encode(job)
+	})
 	if err != nil {
-		_ = cmd.Process.Kill()
-	}
-	if waitErr := cmd.Wait(); err != nil || waitErr != nil {
 		return WorkResult{}, errors.New("worker canceled, limited or failed")
 	}
 	var result WorkResult
