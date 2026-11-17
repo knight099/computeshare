@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+OPENCOMPUTE_MASTER_BUILD_PLAN.md
+LICENSE
+agents/
+**/.next/
+node_modules/

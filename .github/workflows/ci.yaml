@@ -1,0 +1,80 @@
+name: checks
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: integration-only-not-a-production-secret
+          POSTGRES_DB: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.20.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: agents/node-agent/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: make lint typecheck test build
+      - name: Start JetStream for outbox integration
+        run: docker run -d --name opencompute-test-nats -p 127.0.0.1:4222:4222 nats:2.11.9-alpine -js -sd /data
+      - run: make test-integration
+        env:
+          TEST_DATABASE_URL: postgres://test:integration-only-not-a-production-secret@localhost:5432/test
+      - run: cd agents/node-agent && go vet ./...
+      - run: test -z "$(gofmt -l agents/node-agent)"
+  compose-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.20.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: agents/node-agent/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: cd agents/node-agent && go build -o ../../bin/opencompute-agent .
+      - run: make configure
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: make dev
+      - run: curl --fail http://localhost:8080/healthz && curl --fail http://localhost:8080/readyz
+      - name: Browser, reconnect, constrained compute and offline Stop acceptance
+        run: |
+          task_cgroup=/sys/fs/cgroup/opencompute-ci
+          printf '+cpu +memory +pids' | sudo tee /sys/fs/cgroup/cgroup.subtree_control >/dev/null
+          sudo mkdir -p "$task_cgroup"
+          printf '+cpu +memory +pids' | sudo tee "$task_cgroup/cgroup.subtree_control" >/dev/null
+          sudo mkdir -p "$task_cgroup/manager" "$task_cgroup/workloads"
+          printf '+cpu +memory +pids' | sudo tee "$task_cgroup/workloads/cgroup.subtree_control" >/dev/null
+          sudo chown -R "$(id -u):$(id -g)" "$task_cgroup"
+          sudo /bin/sh -c 'echo $$ > "$1/manager/cgroup.procs"; exec setpriv --reuid "$2" --regid "$3" --init-groups env HOME="$5" OPENCOMPUTE_CGROUP_ROOT="$1/workloads" "$4" tests/end-to-end/enrollment.mjs' sh "$task_cgroup" "$(id -u)" "$(id -g)" "$(command -v node)" "$HOME"
+      - name: Dependency outage distinguishes readiness and liveness
+        run: |
+          docker compose stop redis
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/readyz)" = 503
+          curl --fail http://localhost:8080/healthz
+          docker compose stop postgres
+          for i in 1 2 3; do curl --fail --max-time 5 http://localhost:8080/healthz; sleep 1; done
+      - if: failure()
+        run: docker compose ps -a && docker compose logs --tail=80 api identity migrate storage
+      - if: always()
+        run: docker compose down
