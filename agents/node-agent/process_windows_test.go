@@ -67,7 +67,30 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 		fmt.Print("assigned-before-work")
 		os.Exit(0)
 	}
+	if mode == "closed-input" {
+		os.Stdin.Close()
+	}
 	fmt.Print("ready")
+	switch mode {
+	case "echo":
+		_, _ = io.Copy(os.Stdout, os.Stdin)
+		os.Exit(0)
+	case "output-boundary", "output-overflow":
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		size := 8192
+		if mode == "output-overflow" {
+			size++
+		}
+		fmt.Print(strings.Repeat("x", size))
+		if mode == "output-boundary" {
+			os.Exit(0)
+		}
+	case "partial-output":
+		fmt.Print("{")
+	case "failed-output":
+		fmt.Print("must-not-be-accepted")
+		os.Exit(11)
+	}
 	if mode == "process-limit" {
 		// A second copy must be rejected by the kernel, even though this
 		// executable is trusted. An empty test selection would otherwise exit 0.
