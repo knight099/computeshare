@@ -39,6 +39,7 @@ Initial CPU-only vertical slice implemented; full M2 remains incomplete. See ADR
 - [x] Availability sessions with 1/2/4/6/8/12-hour presets, immutable policy and consent snapshots; no automatic renewal.
 - [x] Local Stop, boot-clock/offline expiry, reboot non-resumption, and connection-loss cancellation.
 - [ ] Idle/power/thermal policy adapters and full platform transition matrix.
+- [x] Private bounded Windows hash adapter and native Server2022 control-contract acceptance, including100-job CPU window, offline cancellation and restart non-resumption; public Windows capability remains gated pending actual client/policy/release acceptance.
 - [x] Enforced worker CPU/RAM/swap/pids limits. Unsupported GPU/idle/custom resource controls are rejected; no workload files or network destinations.
 - [ ] Broader disk/network/power/thermal policy controls.
 - [x] Go scheduler: deterministic eligibility, remaining-time safety margin, atomic capacity reservation, offer/accept/reject, leases and epochs.
