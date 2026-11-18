@@ -25,8 +25,9 @@ func windowsCPUCap(percent, cores int) (uint32, error) {
 
 type windowsCPUControl struct{ Flags, Rate uint32 }
 type windowsJob struct {
-	handle  windows.Handle
-	cpuRate uint32
+	handle      windows.Handle
+	cpuRate     uint32
+	memoryLimit uintptr
 }
 
 func newWindowsJob(policy ResourcePolicy) (*windowsJob, error) {
@@ -41,7 +42,7 @@ func newWindowsJob(policy ResourcePolicy) (*windowsJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	job := &windowsJob{handle: handle, cpuRate: rate}
+	job := &windowsJob{handle: handle, cpuRate: rate, memoryLimit: uintptr(policy.MemoryMB) * 1024 * 1024}
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS | windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY | windows.JOB_OBJECT_LIMIT_JOB_MEMORY
 	limits.BasicLimitInformation.ActiveProcessLimit = 1

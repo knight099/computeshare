@@ -105,32 +105,38 @@ func (j *windowsJob) start(ctx context.Context, executable string, args []string
 	startup.StdErr = outWrite
 	startup.ProcThreadAttributeList = attributes.List()
 	var process windows.ProcessInformation
-	flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NO_WINDOW)
+	flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NO_WINDOW | windows.CREATE_SUSPENDED)
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err = windows.CreateProcess(app, command, nil, nil, true, flags, &env[0], nil, &startup.StartupInfo, &process); err != nil {
 		return nil, err
 	}
-	windows.CloseHandle(process.Thread)
-	if canceled := ctx.Err(); canceled != nil {
-		stopErr := windows.TerminateJobObject(j.handle, 1)
-		if stopErr != nil {
-			j.close()
+	startupErr := ctx.Err()
+	if startupErr == nil {
+		startupErr = configureWindowsWorkingSet(process.Process, j.memoryLimit)
+	}
+	if startupErr == nil {
+		startupErr = ctx.Err()
+	}
+	if startupErr == nil {
+		var previous uint32
+		previous, startupErr = windows.ResumeThread(process.Thread)
+		if startupErr == nil && previous != 1 {
+			startupErr = errors.New("unexpected worker suspension state")
 		}
-		state, waitErr := windows.WaitForSingleObject(process.Process, 1500)
+	}
+	windows.CloseHandle(process.Thread)
+	if startupErr == nil {
+		startupErr = ctx.Err()
+	}
+	if startupErr != nil {
+		stopErr := j.stopProcess(process.Process)
 		windows.CloseHandle(process.Process)
 		if stopErr != nil {
 			return nil, stopErr
 		}
-		if waitErr != nil {
-			return nil, waitErr
-		}
-		if state != windows.WAIT_OBJECT_0 {
-			j.close()
-			return nil, errors.New("worker did not terminate during canceled startup")
-		}
-		return nil, canceled
+		return nil, startupErr
 	}
 	success = true
 	return &windowsChild{process: process.Process, pid: process.ProcessId, input: os.NewFile(uintptr(inWrite), "worker-input"), output: os.NewFile(uintptr(outRead), "worker-output")}, nil
@@ -141,15 +147,8 @@ func (j *windowsJob) wait(ctx context.Context, child *windowsChild) (uint32, err
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			if stopErr := windows.TerminateJobObject(j.handle, 1); stopErr != nil {
+			if stopErr := j.stopProcess(child.process); stopErr != nil {
 				return 0, stopErr
-			}
-			state, stopErr := windows.WaitForSingleObject(child.process, 1500)
-			if stopErr != nil {
-				return 0, stopErr
-			}
-			if state != windows.WAIT_OBJECT_0 {
-				return 0, errors.New("worker did not terminate after cancellation")
 			}
 			return 0, err
 		}
@@ -170,6 +169,26 @@ func (j *windowsJob) wait(ctx context.Context, child *windowsChild) (uint32, err
 		}
 		return code, err
 	}
+}
+func (j *windowsJob) stopProcess(process windows.Handle) error {
+	stopErr := windows.TerminateJobObject(j.handle, 1)
+	if stopErr != nil {
+		j.close()
+	}
+	state, waitErr := windows.WaitForSingleObject(process, 1500)
+	if state != windows.WAIT_OBJECT_0 {
+		j.close()
+	}
+	if stopErr != nil {
+		return stopErr
+	}
+	if waitErr != nil {
+		return waitErr
+	}
+	if state != windows.WAIT_OBJECT_0 {
+		return errors.New("worker did not terminate")
+	}
+	return nil
 }
 func (c *windowsChild) close() {
 	if c.input != nil {

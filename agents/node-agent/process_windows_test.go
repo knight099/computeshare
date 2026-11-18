@@ -53,6 +53,12 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 	if err := windows.QueryInformationJobObject(0, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil || limits.BasicLimitInformation.ActiveProcessLimit != 1 || uint64(limits.ProcessMemoryLimit) != expectedMemory || limits.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
 		os.Exit(4)
 	}
+	var minimum, maximum uintptr
+	var workingSetFlags uint32
+	windows.GetProcessWorkingSetSizeEx(windows.CurrentProcess(), &minimum, &maximum, &workingSetFlags)
+	if uint64(maximum) != expectedMemory || workingSetFlags&windows.QUOTA_LIMITS_HARDWS_MAX_ENABLE == 0 {
+		os.Exit(8)
+	}
 	// This check executes before any workload: assignment must be atomic at start.
 	if mode == "probe" {
 		if os.Getenv("OPENCOMPUTE_WORKER_SECRET_FIXTURE") != "" {
