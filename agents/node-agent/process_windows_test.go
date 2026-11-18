@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -43,8 +44,13 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 			time.Sleep(time.Hour)
 		}
 	}
+	expectedMemory := uint64(128 * 1024 * 1024)
+	if value := os.Getenv("OPENCOMPUTE_EXPECT_MEMORY_MB"); value != "" {
+		mb, _ := strconv.ParseUint(value, 10, 32)
+		expectedMemory = mb * 1024 * 1024
+	}
 	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-	if err := windows.QueryInformationJobObject(0, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil || limits.BasicLimitInformation.ActiveProcessLimit != 1 || limits.ProcessMemoryLimit != 128*1024*1024 || limits.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
+	if err := windows.QueryInformationJobObject(0, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil || limits.BasicLimitInformation.ActiveProcessLimit != 1 || uint64(limits.ProcessMemoryLimit) != expectedMemory || limits.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
 		os.Exit(4)
 	}
 	// This check executes before any workload: assignment must be atomic at start.
@@ -56,6 +62,21 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	fmt.Print("ready")
+	if mode == "memory" {
+		data := make([]byte, 256*1024*1024)
+		for i := 0; i < len(data); i += 4096 {
+			data[i] = 1
+		}
+		sum := sha256.Sum256(data)
+		fmt.Printf("allocated:%d:%x", len(data), sum)
+		os.Exit(0)
+	}
+	if mode == "busy" {
+		var sum [32]byte
+		for {
+			sum = sha256.Sum256(sum[:])
+		}
+	}
 	if mode == "exit" {
 		var one [1]byte
 		_, _ = io.ReadFull(os.Stdin, one[:])
