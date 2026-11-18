@@ -38,3 +38,5 @@ Windows CI 44221909237 passed storage encryption/tamper/plaintext rejection, exi
 Implementation sequence and required failure cases: [Windows bounded execution acceptance plan](windows-execution-plan.md).
 
 The next Job Object resource-configuration helpers are under native acceptance. Querying configured limits is not proof of worker enforcement; no Windows runtime is enabled until atomic process assignment, limit-pressure and lifetime tests pass.
+
+Resource configuration groundwork passed all CI 44224534151 jobs on 814bb33, including kernel limit readback, affinity normalization and handle lifetime. Atomic worker creation/supervision helpers are the next native test gate; the Windows runtime remains disabled.
