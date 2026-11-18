@@ -57,13 +57,15 @@ func startDashboard(ctx context.Context, m *SessionManager, port int) (func(), e
 			return
 		}
 		if r.URL.Path == "/stop" {
-			s := m.snapshot()
-			m.stopLocal("STOPPED")
+			s := m.stopLocal("STOPPED")
 			// Network is best-effort only; local cancellation has already happened.
 			go func() {
 				c, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
-				if token, e := deviceToken(c, m.state); e == nil && s.ID != "" {
+				if s.Status != "ACTIVE" || s.ID == "" {
+					return
+				}
+				if token, e := deviceToken(c, m.state); e == nil {
 					_ = request(c, m.state.Gateway, "/v1/agent/availability-sessions/"+s.ID+"/stop", "POST", token, map[string]string{}, nil)
 				}
 			}()
@@ -76,6 +78,16 @@ func startDashboard(ctx context.Context, m *SessionManager, port int) (func(), e
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&body) != nil {
 			http.Error(w, "Invalid sharing policy", 400)
+			return
+		}
+		if body.WaitForIdle {
+			if e := m.start(ctx, body); e != nil {
+				http.Error(w, e.Error(), 400)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprint(w, `{"waiting":true}`)
 			return
 		}
 		c, cancel := context.WithTimeout(r.Context(), 5*time.Second)

@@ -420,6 +420,51 @@ test("sharing requires explicit consent, isolates owners, and respects Stop", as
     consent_version: "sharing-v1",
     accepted: true,
   };
+  const originalDeadline = new Date(Date.now() + 300000).toISOString();
+  const bounded = await app.inject({
+    method: "POST",
+    url: "/v1/availability-sessions",
+    headers: auth(alice),
+    payload: { ...body, consent_expires_at: originalDeadline },
+  });
+  assert.equal(bounded.statusCode, 201);
+  assert.equal(
+    Date.parse(bounded.json().expires_at),
+    Date.parse(originalDeadline),
+  );
+  const expired = await app.inject({
+    method: "POST",
+    url: "/v1/availability-sessions",
+    headers: auth(alice),
+    payload: {
+      ...body,
+      consent_expires_at: new Date(Date.now() - 1000).toISOString(),
+    },
+  });
+  assert.equal(expired.statusCode, 400);
+  assert.equal(
+    (
+      await pool.query("SELECT status FROM availability_sessions WHERE id=$1", [
+        bounded.json().id,
+      ])
+    ).rows[0].status,
+    "ACTIVE",
+  );
+  const extended = await app.inject({
+    method: "POST",
+    url: "/v1/availability-sessions",
+    headers: auth(alice),
+    payload: {
+      ...body,
+      consent_expires_at: new Date(Date.now() + 86400000).toISOString(),
+    },
+  });
+  assert.equal(extended.statusCode, 201);
+  assert.equal(
+    Date.parse(extended.json().expires_at) -
+      Date.parse(extended.json().starts_at),
+    21600000,
+  );
   const refused = await app.inject({
     method: "POST",
     url: "/v1/availability-sessions",

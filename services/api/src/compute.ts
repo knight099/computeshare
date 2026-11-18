@@ -31,6 +31,7 @@ const startSchema = z
     ]),
     policy: policySchema,
     consent_version: z.literal("sharing-v1"),
+    consent_expires_at: z.string().datetime().optional(),
     accepted: z.literal(true),
   })
   .strict();
@@ -136,9 +137,17 @@ export function registerCompute(app: FastifyInstance, auth: Auth) {
       );
       for (const row of previous.rows) await stop(c, row.id, b.device_id);
       const { rows } = await c.query(
-        "INSERT INTO availability_sessions(device_id,starts_at,expires_at,requested_duration_seconds,status,policy_snapshot,consent_version) VALUES($1,statement_timestamp(),statement_timestamp()+$2*interval '1 second',$2,'ACTIVE',$3,$4) RETURNING *",
-        [b.device_id, b.duration_seconds, b.policy, b.consent_version],
+        "INSERT INTO availability_sessions(device_id,starts_at,expires_at,requested_duration_seconds,status,policy_snapshot,consent_version) SELECT $1,statement_timestamp(),LEAST(statement_timestamp()+$2*interval '1 second',COALESCE($5::timestamptz,'infinity'::timestamptz)),$2,'ACTIVE',$3,$4 WHERE $5::timestamptz IS NULL OR $5::timestamptz>clock_timestamp() RETURNING *",
+        [
+          b.device_id,
+          b.duration_seconds,
+          b.policy,
+          b.consent_version,
+          b.consent_expires_at ?? null,
+        ],
       );
+      if (!rows.length)
+        throw new HttpError(400, "Consent deadline has expired");
       await c.query(
         "INSERT INTO audit_events(actor_id,action,object_id,trace_id) VALUES($1,'SHARING_CONSENT_ACCEPTED',$2,$3)",
         [owner ?? b.device_id, rows[0].id, r.id],

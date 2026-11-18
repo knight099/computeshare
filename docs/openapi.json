@@ -933,6 +933,11 @@
           },
           "accepted": {
             "const": true
+          },
+          "consent_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional original UTC consent deadline. The server caps expiry by both this deadline and the selected duration, and rejects elapsed deadlines."
           }
         }
       },

@@ -20,7 +20,7 @@ import (
 // or client-OS release acceptance. Windows runs the actual protected adapter;
 // Linux uses a cancellable executor (real Linux cgroups have Compose coverage).
 func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing.T) {
-	for _, mode := range []string{"complete", "late-completion", "late-expiry", "offline-stop", "safety-stop", "expired-session", "boot-expiry", "disconnect", "remote-cancel", "reconnect", "revocation", "batch", "invalid-trace", "invalid-sequence"} {
+	for _, mode := range []string{"idle-wait", "complete", "late-completion", "late-expiry", "offline-stop", "safety-stop", "expired-session", "boot-expiry", "disconnect", "remote-cancel", "reconnect", "revocation", "batch", "invalid-trace", "invalid-sequence"} {
 		t.Run(mode, func(t *testing.T) {
 			public, private, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
@@ -29,11 +29,12 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			backend := &protocolAcceptanceRuntime{}
 			var connections, consents atomic.Int32
 			var revoked, unsafePower atomic.Bool
+			var idleSeconds atomic.Uint64
 			var batchCPU uint64
 			var batchElapsed time.Duration
 			operator, device, session, nonce := randomID(), randomID(), randomID(), randomString()
 			work := HashJob{Workload: "synthetic-hash-v1", Seed: "public", Iterations: 1000000, AttemptID: randomID(), JobID: randomID(), SessionID: session, Epoch: 1, Timeout: 10, LeaseExpires: time.Now().Add(30 * time.Second)}
-			if mode == "complete" || mode == "batch" || (mode == "late-completion" || mode == "late-expiry") {
+			if mode == "idle-wait" || mode == "complete" || mode == "batch" || (mode == "late-completion" || mode == "late-expiry") {
 				work.Iterations = 2
 			}
 			blocked, release, observed := make(chan struct{}), make(chan struct{}), make(chan string, 1)
@@ -65,14 +66,23 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 					consents.Add(1)
 					var input struct {
 						StartSharing
-						Device  string `json:"device_id"`
-						Consent string `json:"consent_version"`
+						Device   string    `json:"device_id"`
+						Consent  string    `json:"consent_version"`
+						Deadline time.Time `json:"consent_expires_at"`
 					}
 					json.NewDecoder(r.Body).Decode(&input)
 					if r.Header.Get("Authorization") != "Bearer fixture-device-token" || !input.Accepted || input.Duration != 3600 || input.Device != device || input.Consent != "sharing-v1" || input.Policy != (ResourcePolicy{CPUPercent: 10, MemoryMB: 128}) {
 						t.Error("sharing bypassed explicit consent")
 					}
-					json.NewEncoder(w).Encode(map[string]interface{}{"id": session, "expires_at": time.Now().Add(time.Hour)})
+					expiry := time.Now().Add(time.Hour)
+					if mode == "idle-wait" {
+						if input.Deadline.IsZero() {
+							t.Error("idle activation omitted original company consent deadline")
+						} else {
+							expiry = input.Deadline
+						}
+					}
+					json.NewEncoder(w).Encode(map[string]interface{}{"id": session, "expires_at": expiry})
 				case "/v1/agent/connect":
 					if r.Header.Get("Authorization") != "Bearer fixture-device-token" {
 						w.WriteHeader(401)
@@ -85,7 +95,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 					defer ws.Close()
 					connection := connections.Add(1)
 					work := work
-					successful := mode == "complete" || mode == "batch" || mode == "reconnect" && connection == 2
+					successful := mode == "idle-wait" || mode == "complete" || mode == "batch" || mode == "reconnect" && connection == 2
 					if mode == "reconnect" && connection == 2 {
 						work.AttemptID = randomID()
 						work.Epoch = 2
@@ -243,7 +253,11 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			manager.safetySource = func(context.Context) hostObservation { ac := !unsafePower.Load(); return hostObservation{AC: &ac} }
+			manager.safetySource = func(context.Context) hostObservation {
+				ac := !unsafePower.Load()
+				idle := idleSeconds.Load()
+				return hostObservation{AC: &ac, IdleSeconds: &idle}
+			}
 			manager.backend = backend
 			if mode == "late-completion" || mode == "late-expiry" {
 				manager.backend = delayedProtocolCompletion{executionBackend: manager.backend, release: release, computed: computed}
@@ -252,10 +266,31 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 				t.Fatal("runtime availability bypassed explicit sharing consent")
 			}
 			guard := SafetyPolicy{ACOnly: mode == "safety-stop"}
-			if err := manager.start(context.Background(), StartSharing{Duration: 3600, Policy: ResourcePolicy{CPUPercent: 10, MemoryMB: 128}, Accepted: true, Safety: guard}); err != nil {
+			if mode == "idle-wait" {
+				guard.IdleSeconds = 60
+			}
+			if err := manager.start(context.Background(), StartSharing{Duration: 3600, Policy: ResourcePolicy{CPUPercent: 10, MemoryMB: 128}, Accepted: true, Safety: guard, WaitForIdle: mode == "idle-wait"}); err != nil {
 				t.Fatal(err)
 			}
 			limit := 12 * time.Second
+			if mode == "idle-wait" {
+				pending := manager.snapshot()
+				if pending.Status != "STARTING" || !pending.WaitingIdle || consents.Load() != 0 {
+					t.Fatal("idle wait contacted company before eligibility")
+				}
+				idleSeconds.Store(60)
+				deadline := time.Now().Add(3 * time.Second)
+				for manager.snapshot().Status != "ACTIVE" {
+					if time.Now().After(deadline) {
+						t.Fatal("eligible idle wait did not activate")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				active := manager.snapshot()
+				if active.ExpiresAt.After(pending.ExpiresAt) || active.ExpiresBoot != pending.ExpiresBoot {
+					t.Fatal("idle waiting renewed original consent deadline")
+				}
+			}
 			if mode == "batch" {
 				limit = 120 * time.Second
 			}
@@ -382,7 +417,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			}
 			select {
 			case kind := <-observed:
-				if (mode == "complete" || mode == "reconnect" || mode == "batch") && kind != "JOB_COMPLETE" || (mode != "complete" && mode != "reconnect" && mode != "batch") && kind != "JOB_FAIL" {
+				if (mode == "idle-wait" || mode == "complete" || mode == "reconnect" || mode == "batch") && kind != "JOB_COMPLETE" || (mode != "idle-wait" && mode != "complete" && mode != "reconnect" && mode != "batch") && kind != "JOB_FAIL" {
 					t.Fatalf("unexpected terminal message: %s", kind)
 				}
 			case <-ctx.Done():
@@ -394,7 +429,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 				status, result, pending := manager.JobStatus, manager.LastResult, manager.CurrentAttempt
 				manager.mu.Unlock()
 				if pending == "" {
-					success := mode == "complete" || mode == "reconnect" || mode == "batch"
+					success := mode == "idle-wait" || mode == "complete" || mode == "reconnect" || mode == "batch"
 					if success && (status != "VERIFIED" || result.Result == "") {
 						t.Error("successful result not recorded")
 					}
