@@ -37,6 +37,6 @@ Windows CI 44221909237 passed storage encryption/tamper/plaintext rejection, exi
 
 Implementation sequence and required failure cases: [Windows bounded execution acceptance plan](windows-execution-plan.md).
 
-The next Job Object resource-configuration helpers are under native acceptance. Querying configured limits is not proof of worker enforcement; no Windows runtime is enabled until atomic process assignment, limit-pressure and lifetime tests pass.
+Resource configuration passed CI 44224534151, and atomic worker creation, restricted handle/environment inheritance, cancellation and supervisor-death tests passed CI 44227475281. Private-commit pressure and hard working-set setup/readback also run natively. These helpers are not yet connected to the shared workload adapter.
 
-Resource configuration groundwork passed all CI 44224534151 jobs on 814bb33, including kernel limit readback, affinity normalization and handle lifetime. Atomic worker creation/supervision helpers are the next native test gate; the Windows runtime remains disabled.
+CPU time enforcement remains unresolved: CI 44231972371 failed the short-window quota test. The subsequent diagnostic commit passed all three CI 44232711588 jobs, but four-second samples measured 0.116/0.271/0.566 CPU cores for selections of 10/25/50 percent of one core. A passing rerun does not close the failed gate. The kernel configuration uses cycle quotas; usage reports CPU time. Continuous accounting comparisons are the next investigation step. Windows execution remains disabled until measured behavior satisfies the declared consent policy.

@@ -71,6 +71,61 @@ func TestWindowsBusyWorkerStaysWithinOneCoreQuotaAndStops(t *testing.T) {
 	}
 }
 
+func TestWindowsActiveProcessLimitRejectsWorkerDescendant(t *testing.T) {
+	code, err, _, output, _ := runWindowsPressureFixture(t, ResourcePolicy{CPUPercent: 100, MemoryMB: 128}, "process-limit", nil, 5*time.Second)
+	if err != nil || code != 0 || !strings.Contains(output, "process-denied:") {
+		t.Fatalf("descendant process was not rejected: exit=%d err=%v output=%q", code, err, output)
+	}
+}
+
+// Compare two independent kernel accounting APIs on the same continuously
+// running process. Separate intervals distinguish startup from sustained usage.
+func TestWindowsCPUAccountingAcrossContinuousIntervals(t *testing.T) {
+	job, err := newWindowsJob(ResourcePolicy{CPUPercent: 25, MemoryMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer job.close()
+	child, err := job.start(context.Background(), os.Args[0], []string{"-test.run=^TestWindowsJobProcessHelper$"}, map[string]string{"OPENCOMPUTE_JOB_PROCESS_HELPER": "busy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { job.close(); child.close() }()
+	nativeWorkerReady(t, job, child)
+	previous, err := job.usage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	for interval := 1; interval <= 4; interval++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		<-ctx.Done()
+		cancel()
+		usage, err := job.usage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var created, exited, kernel, user windows.Filetime
+		if err := windows.GetProcessTimes(child.process, &created, &exited, &kernel, &user); err != nil {
+			t.Fatal(err)
+		}
+		processUsec := ((uint64(kernel.HighDateTime)<<32 | uint64(kernel.LowDateTime)) + (uint64(user.HighDateTime)<<32 | uint64(user.LowDateTime))) / 10
+		// Queries are sequential while the worker is live; allow two Windows
+		// accounting ticks, not a percentage of the selected resource quota.
+		if processUsec < usage.CPUUsec || processUsec-usage.CPUUsec > 31250 {
+			t.Fatalf("job/process accounting mismatch: job=%d process=%d", usage.CPUUsec, processUsec)
+		}
+		elapsed := time.Since(started)
+		t.Logf("continuous CPU: interval=%d wall_seconds=%.3f job_usec=%d process_usec=%d interval_cores=%.3f", interval, elapsed.Seconds(), usage.CPUUsec, processUsec, float64(usage.CPUUsec-previous.CPUUsec)/elapsed.Seconds()/1000000)
+		previous, started = usage, time.Now()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := job.wait(ctx, child); !errors.Is(err, context.Canceled) {
+		t.Fatalf("continuous worker did not stop: %v", err)
+	}
+}
+
 // Diagnostics do not replace the strict acceptance assertion above.
 func TestWindowsCPUQuotaLongWindowDiagnostics(t *testing.T) {
 	host := windows.GetActiveProcessorCount(windows.ALL_PROCESSOR_GROUPS)

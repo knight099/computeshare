@@ -68,6 +68,19 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 		os.Exit(0)
 	}
 	fmt.Print("ready")
+	if mode == "process-limit" {
+		// A second copy must be rejected by the kernel, even though this
+		// executable is trusted. An empty test selection would otherwise exit 0.
+		cmd := exec.Command(os.Args[0], "-test.run=^$")
+		if err := cmd.Start(); err == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			os.Exit(9)
+		} else {
+			fmt.Printf("process-denied:%v", err)
+		}
+		os.Exit(0)
+	}
 	if mode == "memory" {
 		data := make([]byte, 256*1024*1024)
 		for i := 0; i < len(data); i += 4096 {
