@@ -59,9 +59,30 @@ func (p *windowsCPUPacer) wait(ctx context.Context) error {
 }
 
 func windowsHashWork(ctx context.Context, job HashJob, percent int) (string, error) {
+	return windowsHashWorkOnHost(ctx, job, percent, windows.GetActiveProcessorCount(windows.ALL_PROCESSOR_GROUPS))
+}
+
+func windowsHashWorkOnHost(ctx context.Context, job HashJob, percent int, host uint32) (string, error) {
 	pacer, err := newWindowsCPUPacer(percent)
 	if err != nil {
 		return "", err
 	}
-	return hashWorkWithCheckpoint(ctx, job, pacer.wait)
+	return hashWorkWithCheckpoint(ctx, job, func(ctx context.Context) error {
+		if !job.LeaseExpires.IsZero() && windowsLeaseExpired(job.LeaseExpires, time.Now()) {
+			return context.DeadlineExceeded
+		}
+		if host == 0 || windows.GetActiveProcessorCount(windows.ALL_PROCESSOR_GROUPS) != host {
+			return errors.New("CPU topology changed")
+		}
+		if err := pacer.wait(ctx); err != nil {
+			return err
+		}
+		if !job.LeaseExpires.IsZero() && windowsLeaseExpired(job.LeaseExpires, time.Now()) {
+			return context.DeadlineExceeded
+		}
+		if windows.GetActiveProcessorCount(windows.ALL_PROCESSOR_GROUPS) != host {
+			return errors.New("CPU topology changed")
+		}
+		return nil
+	})
 }

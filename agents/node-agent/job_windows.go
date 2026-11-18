@@ -28,13 +28,15 @@ type windowsJob struct {
 	handle      windows.Handle
 	cpuRate     uint32
 	memoryLimit uintptr
+	hostCPUs    uint32
 }
 
 func newWindowsJob(policy ResourcePolicy) (*windowsJob, error) {
 	if !policy.valid() {
 		return nil, errors.New("unsupported Windows resource policy")
 	}
-	rate, err := windowsCPUCap(policy.CPUPercent, int(windows.GetActiveProcessorCount(windows.ALL_PROCESSOR_GROUPS)))
+	host := windows.GetActiveProcessorCount(windows.ALL_PROCESSOR_GROUPS)
+	rate, err := windowsCPUCap(policy.CPUPercent, int(host))
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +44,7 @@ func newWindowsJob(policy ResourcePolicy) (*windowsJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	job := &windowsJob{handle: handle, cpuRate: rate, memoryLimit: uintptr(policy.MemoryMB) * 1024 * 1024}
+	job := &windowsJob{handle: handle, cpuRate: rate, memoryLimit: uintptr(policy.MemoryMB) * 1024 * 1024, hostCPUs: host}
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS | windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY | windows.JOB_OBJECT_LIMIT_JOB_MEMORY
 	limits.BasicLimitInformation.ActiveProcessLimit = 1
@@ -66,15 +68,21 @@ func newWindowsJob(policy ResourcePolicy) (*windowsJob, error) {
 	return job, nil
 }
 func (j *windowsJob) limits() (windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION, windowsCPUControl, error) {
+	if j.handle == 0 {
+		return windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}, windowsCPUControl{}, errors.New("resource handle closed")
+	}
+	return queryWindowsJobLimits(j.handle)
+}
+
+// Handle zero queries the calling worker's immediate job. Parent operations
+// continue to reject closed owned handles before reaching this kernel boundary.
+func queryWindowsJobLimits(handle windows.Handle) (windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION, windowsCPUControl, error) {
 	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 	var cpu windowsCPUControl
-	if j.handle == 0 {
-		return limits, cpu, errors.New("resource handle closed")
-	}
-	if err := windows.QueryInformationJobObject(j.handle, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil {
+	if err := windows.QueryInformationJobObject(handle, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil {
 		return limits, cpu, err
 	}
-	err := windows.QueryInformationJobObject(j.handle, windows.JobObjectCpuRateControlInformation, uintptr(unsafe.Pointer(&cpu)), uint32(unsafe.Sizeof(cpu)), nil)
+	err := windows.QueryInformationJobObject(handle, windows.JobObjectCpuRateControlInformation, uintptr(unsafe.Pointer(&cpu)), uint32(unsafe.Sizeof(cpu)), nil)
 	return limits, cpu, err
 }
 func (j *windowsJob) close() error {

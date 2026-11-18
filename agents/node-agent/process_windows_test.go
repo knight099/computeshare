@@ -72,6 +72,41 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 		os.Stdin.Close()
 	}
 	fmt.Print("ready")
+	if mode == "shared-resident" {
+		var number uint64
+		if _, err := fmt.Fscan(os.Stdin, &number); err != nil {
+			os.Exit(16)
+		}
+		mapping := windows.Handle(number)
+		view, err := windows.MapViewOfFile(mapping, windows.FILE_MAP_READ, 0, 0, windowsSharedPressureBytes)
+		if err != nil {
+			os.Exit(17)
+		}
+		data := make([]byte, 64*1024)
+		var sum uint64
+		for pass := 0; pass < 3; pass++ {
+			for offset := 0; offset < windowsSharedPressureBytes; offset += len(data) {
+				var read uintptr
+				if err := windows.ReadProcessMemory(windows.CurrentProcess(), view+uintptr(offset), &data[0], uintptr(len(data)), &read); err != nil || read != uintptr(len(data)) {
+					os.Exit(20)
+				}
+				for i := 0; i < len(data); i += 4096 {
+					sum += uint64(data[i])
+				}
+			}
+		}
+		if sum != 3*(windowsSharedPressureBytes/4096) {
+			os.Exit(18)
+		}
+		usage, err := windowsProcessMemory(windows.CurrentProcess())
+		if err != nil {
+			os.Exit(19)
+		}
+		_ = windows.UnmapViewOfFile(view)
+		_ = windows.CloseHandle(mapping)
+		_ = json.NewEncoder(os.Stdout).Encode(usage)
+		os.Exit(0)
+	}
 	percent := 25
 	if value := os.Getenv("OPENCOMPUTE_EXPECT_CPU_PERCENT"); value != "" {
 		percent, _ = strconv.Atoi(value)

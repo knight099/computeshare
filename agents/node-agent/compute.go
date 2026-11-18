@@ -41,14 +41,21 @@ func hashWork(ctx context.Context, j HashJob) (string, error) {
 
 // Keep one algorithm/validator; runtime-specific resource pacing may pause or
 // fail at bounded checkpoints, but can never change the workload or result.
-func hashWorkWithCheckpoint(ctx context.Context, j HashJob, checkpoint func(context.Context) error) (string, error) {
+func validateHashWork(j HashJob) error {
 	if j.Workload != "synthetic-hash-v1" || j.Iterations < 1 || j.Iterations > 1000000 || len(j.Seed) < 1 || len(j.Seed) > 64 {
-		return "", errors.New("unsupported synthetic workload")
+		return errors.New("unsupported synthetic workload")
 	}
 	for _, c := range j.Seed {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune(" _.-", c)) {
-			return "", errors.New("invalid public seed")
+			return errors.New("invalid public seed")
 		}
+	}
+	return nil
+}
+
+func hashWorkWithCheckpoint(ctx context.Context, j HashJob, checkpoint func(context.Context) error) (string, error) {
+	if err := validateHashWork(j); err != nil {
+		return "", err
 	}
 	data := []byte(j.Seed)
 	for i := 0; i < j.Iterations; i++ {

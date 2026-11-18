@@ -12,6 +12,32 @@ import (
 // Do not relabel this as a RAM limit or claim hostile-code isolation.
 type windowsResourceUsage struct{ CPUUsec, PeakCommitBytes uint64 }
 
+type windowsMemoryUsage struct {
+	PeakResidentBytes  uint64 `json:"peak_resident_bytes"`
+	PrivateCommitBytes uint64 `json:"private_commit_bytes"`
+}
+
+var processMemoryInfo = kernel.NewProc("K32GetProcessMemoryInfo")
+
+// PROCESS_MEMORY_COUNTERS_EX exposes distinct resident and private-commit
+// counters. Query the owned process; never relabel commit as physical RAM.
+func windowsProcessMemory(process windows.Handle) (windowsMemoryUsage, error) {
+	var counters struct {
+		Size, PageFaults                                         uint32
+		PeakWorkingSet, WorkingSet                               uintptr
+		PeakPagedPool, PagedPool, PeakNonPagedPool, NonPagedPool uintptr
+		PageFile, PeakPageFile, PrivateUsage                     uintptr
+	}
+	counters.Size = uint32(unsafe.Sizeof(counters))
+	if err := processMemoryInfo.Find(); err != nil {
+		return windowsMemoryUsage{}, err
+	}
+	if ok, _, err := processMemoryInfo.Call(uintptr(process), uintptr(unsafe.Pointer(&counters)), uintptr(counters.Size)); ok == 0 {
+		return windowsMemoryUsage{}, err
+	}
+	return windowsMemoryUsage{PeakResidentBytes: uint64(counters.PeakWorkingSet), PrivateCommitBytes: uint64(counters.PrivateUsage)}, nil
+}
+
 func windowsProcessCPUUsec(process windows.Handle) (uint64, error) {
 	var created, exited, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(process, &created, &exited, &kernel, &user); err != nil {
