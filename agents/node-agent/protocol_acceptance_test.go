@@ -20,7 +20,7 @@ import (
 // or client-OS release acceptance. Windows runs the actual protected adapter;
 // Linux uses a cancellable executor (real Linux cgroups have Compose coverage).
 func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing.T) {
-	for _, mode := range []string{"complete", "late-completion", "late-expiry", "offline-stop", "expired-session", "boot-expiry", "disconnect", "remote-cancel", "reconnect", "revocation", "batch", "invalid-trace", "invalid-sequence"} {
+	for _, mode := range []string{"complete", "late-completion", "late-expiry", "offline-stop", "safety-stop", "expired-session", "boot-expiry", "disconnect", "remote-cancel", "reconnect", "revocation", "batch", "invalid-trace", "invalid-sequence"} {
 		t.Run(mode, func(t *testing.T) {
 			public, private, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
@@ -28,7 +28,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			}
 			backend := &protocolAcceptanceRuntime{}
 			var connections, consents atomic.Int32
-			var revoked atomic.Bool
+			var revoked, unsafePower atomic.Bool
 			var batchCPU uint64
 			var batchElapsed time.Duration
 			operator, device, session, nonce := randomID(), randomID(), randomID(), randomString()
@@ -243,6 +243,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
+			manager.safetySource = func(context.Context) hostObservation { ac := !unsafePower.Load(); return hostObservation{AC: &ac} }
 			manager.backend = backend
 			if mode == "late-completion" || mode == "late-expiry" {
 				manager.backend = delayedProtocolCompletion{executionBackend: manager.backend, release: release, computed: computed}
@@ -250,7 +251,8 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			if err := manager.start(context.Background(), StartSharing{Duration: 3600, Policy: ResourcePolicy{CPUPercent: 10, MemoryMB: 128}}); err == nil || consents.Load() != 0 {
 				t.Fatal("runtime availability bypassed explicit sharing consent")
 			}
-			if err := manager.start(context.Background(), StartSharing{Duration: 3600, Policy: ResourcePolicy{CPUPercent: 10, MemoryMB: 128}, Accepted: true}); err != nil {
+			guard := SafetyPolicy{ACOnly: mode == "safety-stop"}
+			if err := manager.start(context.Background(), StartSharing{Duration: 3600, Policy: ResourcePolicy{CPUPercent: 10, MemoryMB: 128}, Accepted: true, Safety: guard}); err != nil {
 				t.Fatal(err)
 			}
 			limit := 12 * time.Second
@@ -259,7 +261,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), limit)
 			defer cancel()
-			if mode == "expired-session" || mode == "boot-expiry" {
+			if mode == "safety-stop" || mode == "expired-session" || mode == "boot-expiry" {
 				watched := make(chan struct{})
 				go func() { manager.watch(ctx); close(watched) }()
 				defer func() { cancel(); <-watched }()
@@ -288,7 +290,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 				return
 			}
 
-			if mode == "offline-stop" || mode == "expired-session" || mode == "boot-expiry" || (mode == "late-completion" || mode == "late-expiry") {
+			if mode == "offline-stop" || mode == "safety-stop" || mode == "expired-session" || mode == "boot-expiry" || (mode == "late-completion" || mode == "late-expiry") {
 				select {
 				case <-blocked:
 				case <-ctx.Done():
@@ -304,7 +306,9 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 				if mode != "late-completion" && mode != "late-expiry" && !manager.execution().running(manager.root, work.AttemptID) {
 					t.Fatal("fixture never ran an active worker")
 				}
-				if mode == "offline-stop" || mode == "late-completion" {
+				if mode == "safety-stop" {
+					unsafePower.Store(true)
+				} else if mode == "offline-stop" || mode == "late-completion" {
 					manager.stopLocal("STOPPED")
 				} else {
 					manager.mu.Lock()
@@ -327,6 +331,14 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 						t.Fatal("local cancellation waited for company ACK")
 					}
 					time.Sleep(5 * time.Millisecond)
+				}
+				if mode == "safety-stop" {
+					manager.mu.Lock()
+					stopped := manager.session.Status == "STOPPED"
+					manager.mu.Unlock()
+					if !stopped {
+						t.Fatal("watch did not stop unsafe sharing before company ACK")
+					}
 				}
 				unblock()
 			}

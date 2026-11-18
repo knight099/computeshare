@@ -41,10 +41,11 @@ func startDashboard(ctx context.Context, m *SessionManager, port int) (func(), e
 		}
 		if r.Method == "GET" && r.URL.Path == "/state" {
 			s := m.snapshot()
+			host := m.health().observe(r.Context(), false)
 			m.mu.Lock()
 			defer m.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"worker_running": m.execution().running(m.root, m.CurrentAttempt), "csrf": csrf, "session": s, "device_id": m.state.Device, "connected": m.Connected, "execution_available": m.execution().available(m.root), "execution_unavailable_reason": m.execution().reason(), "current_job": m.CurrentJob, "last_job": m.LastJob, "job_status": m.JobStatus, "last_result": m.LastResult, "error": m.LastError})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"host": host, "worker_running": m.execution().running(m.root, m.CurrentAttempt), "csrf": csrf, "session": s, "device_id": m.state.Device, "connected": m.Connected, "execution_available": m.execution().available(m.root), "execution_unavailable_reason": m.execution().reason(), "current_job": m.CurrentJob, "last_job": m.LastJob, "job_status": m.JobStatus, "last_result": m.LastResult, "error": m.LastError})
 			return
 		}
 		if r.Method != "POST" || (r.URL.Path != "/start" && r.URL.Path != "/stop") {

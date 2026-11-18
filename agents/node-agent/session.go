@@ -18,6 +18,7 @@ type LocalSession struct {
 	ExpiresBoot float64        `json:"expires_boot"`
 	ExpiresAt   time.Time      `json:"expires_at"`
 	Policy      ResourcePolicy `json:"policy"`
+	Safety      SafetyPolicy   `json:"safety,omitempty"`
 }
 
 func (s LocalSession) live(boot string, uptime float64, now time.Time) bool {
@@ -25,6 +26,9 @@ func (s LocalSession) live(boot string, uptime float64, now time.Time) bool {
 }
 
 type SessionManager struct {
+	safetyOnce     sync.Once
+	sensors        *safetyMonitor
+	safetySource   func(context.Context) hostObservation
 	backend        executionBackend // immutable after construction; no external override
 	mu             sync.Mutex
 	session        LocalSession
@@ -52,6 +56,19 @@ func newSessionManager(dir string, state State) (*SessionManager, error) {
 	} else if !os.IsNotExist(e) {
 		return nil, e
 	}
+	if !m.session.Safety.valid() {
+		return nil, errors.New("invalid saved safety policy")
+	}
+	if strings.HasPrefix(m.session.Status, "GUARDED_ACTIVE_") {
+		if m.session.Status != guardedSessionStatus || !m.session.Safety.enabled() {
+			return nil, errors.New("unsupported guarded session format")
+		}
+		m.stopLocal("STOPPED")
+		m.LastError = "Guarded sharing does not resume after agent restart."
+	}
+	if m.session.Status == "ACTIVE" && m.session.Safety.enabled() {
+		return nil, errors.New("unguarded saved safety policy")
+	}
 	if m.session.Status == "STARTING" {
 		m.stopLocal("STOPPED")
 	}
@@ -75,7 +92,7 @@ func (m *SessionManager) stopLocal(status string) {
 	defer m.mu.Unlock()
 	m.stopLocked(status)
 	if m.session.ID != "" {
-		_ = withSessionLock(m.dir, func() error { return save(filepath.Join(m.dir, "session.json"), m.session) })
+		_ = withSessionLock(m.dir, func() error { return saveLocalSession(m.dir, m.session) })
 	}
 }
 func (m *SessionManager) prepareStart(boot string, up float64, duration int, p ResourcePolicy) (uint64, error) {
@@ -83,8 +100,8 @@ func (m *SessionManager) prepareStart(boot string, up float64, duration int, p R
 	defer m.mu.Unlock()
 	err := withSessionLock(m.dir, func() error {
 		m.stopLocked("STOPPED")
-		m.session = LocalSession{randomID(), "STARTING", boot, up + float64(duration), time.Now().Add(time.Duration(duration) * time.Second), p}
-		return save(filepath.Join(m.dir, "session.json"), m.session)
+		m.session = LocalSession{ID: randomID(), Status: "STARTING", BootID: boot, ExpiresBoot: up + float64(duration), ExpiresAt: time.Now().Add(time.Duration(duration) * time.Second), Policy: p}
+		return saveLocalSession(m.dir, m.session)
 	})
 	return m.generation, err
 }
@@ -103,7 +120,7 @@ func (m *SessionManager) adoptSession(generation uint64, session LocalSession) e
 			}
 		}
 		m.session = session
-		if e := save(filepath.Join(m.dir, "session.json"), session); e != nil {
+		if e := saveLocalSession(m.dir, session); e != nil {
 			m.stopLocked("STOPPED")
 			return errors.New("cannot persist local expiry policy")
 		}
@@ -122,6 +139,7 @@ func (m *SessionManager) checkDiskStop() {
 	}
 }
 func (m *SessionManager) snapshot() LocalSession {
+	m.checkSafety()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.session.Status == "ACTIVE" {
@@ -133,7 +151,7 @@ func (m *SessionManager) snapshot() LocalSession {
 				m.cancel()
 				m.cancel = nil
 			}
-			_ = save(filepath.Join(m.dir, "session.json"), m.session)
+			_ = saveLocalSession(m.dir, m.session)
 		}
 	}
 	return m.session
@@ -157,6 +175,7 @@ type StartSharing struct {
 	Duration int            `json:"duration_seconds"`
 	Policy   ResourcePolicy `json:"policy"`
 	Accepted bool           `json:"accepted"`
+	Safety   SafetyPolicy   `json:"safety,omitempty"`
 }
 
 func (m *SessionManager) start(ctx context.Context, b StartSharing) error {
@@ -189,9 +208,18 @@ func (m *SessionManager) start(ctx context.Context, b StartSharing) error {
 		defer m.mu.Unlock()
 		if m.generation == generation && m.session.Status == "STARTING" {
 			m.stopLocked("STOPPED")
-			_ = withSessionLock(m.dir, func() error { return save(filepath.Join(m.dir, "session.json"), m.session) })
+			_ = withSessionLock(m.dir, func() error { return saveLocalSession(m.dir, m.session) })
 		}
 	}()
+	if err := m.requireSafety(ctx, b.Safety); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	stopped := m.generation != generation || m.session.Status != "STARTING"
+	m.mu.Unlock()
+	if stopped {
+		return errors.New("sharing was stopped while starting")
+	}
 	token, e := deviceToken(ctx, m.state)
 	if e != nil {
 		return e
@@ -209,7 +237,10 @@ func (m *SessionManager) start(ctx context.Context, b StartSharing) error {
 	if session.Expires.Before(wallExpiry) {
 		wallExpiry = session.Expires
 	}
-	return m.adoptSession(generation, LocalSession{session.ID, "ACTIVE", boot, up + float64(b.Duration), wallExpiry, b.Policy})
+	if err := m.requireSafety(ctx, b.Safety); err != nil {
+		return err
+	}
+	return m.adoptSession(generation, LocalSession{ID: session.ID, Status: "ACTIVE", BootID: boot, ExpiresBoot: up + float64(b.Duration), ExpiresAt: wallExpiry, Policy: b.Policy, Safety: b.Safety})
 }
 func (m *SessionManager) begin(job HashJob, cancel context.CancelFunc) bool {
 	s := m.snapshot()
