@@ -207,7 +207,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 									}
 								}
 							}
-							if mode != "batch" || count == 20 {
+							if mode != "batch" || count == 100 {
 								batchElapsed = time.Since(batchStarted)
 								observed <- message.Type
 							} else {
@@ -255,7 +255,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			}
 			limit := 12 * time.Second
 			if mode == "batch" {
-				limit = 45 * time.Second
+				limit = 120 * time.Second
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), limit)
 			defer cancel()
@@ -405,7 +405,7 @@ func TestNativeControlProtocolConsentCompletionAndOfflineCancellation(t *testing
 			}
 			if mode == "batch" {
 				allowed := uint64(batchElapsed.Seconds()*0.1*1000000) + 150000
-				t.Logf("20-job session: CPU=%d allowed=%d elapsed=%v", batchCPU, allowed, batchElapsed)
+				t.Logf("100-job session: CPU=%d allowed=%d elapsed=%v", batchCPU, allowed, batchElapsed)
 				if runtime.GOOS == "windows" && (batchCPU == 0 || batchCPU > allowed) {
 					t.Error("aggregate session CPU budget failed")
 				}

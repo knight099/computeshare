@@ -221,30 +221,44 @@ func readSecret(path string) ([]byte, error) {
 
 // Modern Windows replacement semantics keep old reader handles valid while
 // making the complete new file visible atomically. No delete/in-place fallback.
+type windowsRenameInfo struct {
+	Flags         uint32
+	RootDirectory windows.Handle
+	NameLength    uint32
+	Name          [1]uint16
+}
+
+func windowsRenameBuffer(path string) ([]byte, error) {
+	name, e := windows.UTF16FromString(path)
+	if e != nil {
+		return nil, e
+	}
+	var layout windowsRenameInfo
+	length := int(unsafe.Offsetof(layout.Name)) + len(name)*2
+	if length < int(unsafe.Sizeof(layout)) {
+		length = int(unsafe.Sizeof(layout))
+	}
+	buffer := make([]byte, length)
+	info := (*windowsRenameInfo)(unsafe.Pointer(&buffer[0]))
+	info.Flags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
+	// The counted length excludes NUL; the backing storage includes it.
+	// Otherwise size-class-aligned paths can expose adjacent heap contents to
+	// Win32 path conversion even though the counted native descriptor is valid.
+	info.NameLength = uint32((len(name) - 1) * 2)
+	copy(unsafe.Slice(&info.Name[0], len(name)), name)
+	return buffer, nil
+}
+
 func replaceWindowsState(handle windows.Handle, path string) error {
 	absolute, e := checkedWindowsPath(path)
 	if e != nil {
 		return e
 	}
-	name, e := windows.UTF16FromString(absolute)
+	buffer, e := windowsRenameBuffer(absolute)
 	if e != nil {
 		return e
 	}
-	name = name[:len(name)-1]
-	type renameInfo struct {
-		Flags         uint32
-		RootDirectory windows.Handle
-		NameLength    uint32
-		Name          [1]uint16
-	}
-	var layout renameInfo
-	length := int(unsafe.Offsetof(layout.Name)) + len(name)*2
-	buffer := make([]byte, length)
-	info := (*renameInfo)(unsafe.Pointer(&buffer[0]))
-	info.Flags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
-	info.NameLength = uint32(len(name) * 2)
-	copy(unsafe.Slice(&info.Name[0], len(name)), name)
-	if e = windows.SetFileInformationByHandle(handle, windows.FileRenameInfoEx, &buffer[0], uint32(length)); e != nil {
+	if e = windows.SetFileInformationByHandle(handle, windows.FileRenameInfoEx, &buffer[0], uint32(len(buffer))); e != nil {
 		return &os.PathError{Op: "replace protected state", Path: absolute, Err: e}
 	}
 	return nil

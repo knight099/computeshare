@@ -9,9 +9,59 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
+
+func TestWindowsRenameBufferHasCountedNameAndExplicitTerminator(t *testing.T) {
+	for _, path := range []string{`C:\state\secret.json`, `C:\state\unicode-😀.json`, `C:\` + strings.Repeat("r", 131)} {
+		buffer, err := windowsRenameBuffer(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info := (*windowsRenameInfo)(unsafe.Pointer(&buffer[0]))
+		encoded, _ := windows.UTF16FromString(path)
+		if info.NameLength != uint32((len(encoded)-1)*2) || info.RootDirectory != 0 || info.Flags != 3 {
+			t.Fatal("invalid native rename descriptor")
+		}
+		offset := int(unsafe.Offsetof(info.Name))
+		if len(buffer) < offset+int(info.NameLength)+2 {
+			t.Fatal("rename descriptor omitted explicit terminator")
+		}
+		if got := unsafe.Slice(&info.Name[0], len(encoded)); !bytes.Equal(unsafe.Slice((*byte)(unsafe.Pointer(&got[0])), len(got)*2), unsafe.Slice((*byte)(unsafe.Pointer(&encoded[0])), len(encoded)*2)) {
+			t.Fatal("native rename name differs from encoded path")
+		}
+	}
+}
+
+func TestWindowsProtectedReplacementAtAllocationBoundary(t *testing.T) {
+	dir := testStateDir(t)
+	prefix := dir + string(os.PathSeparator)
+	encoded, _ := windows.UTF16FromString(prefix)
+	var path string
+	for _, size := range []int{288, 320, 352, 384, 416, 448, 480, 512} {
+		leaf := (size-20)/2 - (len(encoded) - 1)
+		if leaf >= 6 {
+			path = prefix + strings.Repeat("r", leaf-5) + ".json"
+			break
+		}
+	}
+	if path == "" {
+		t.Fatal("state directory too long for boundary fixture")
+	}
+	for i := 0; i < 64; i++ {
+		value := []byte{byte(i)}
+		if err := writeSecret(path, value); err != nil {
+			t.Fatal(err)
+		}
+		got, err := readSecret(path)
+		if err != nil || !bytes.Equal(got, value) {
+			t.Fatal("boundary replacement lost protected state")
+		}
+	}
+}
 
 func TestWindowsStateIsEncryptedAndRejectsPlaintextOrTampering(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
