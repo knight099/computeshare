@@ -35,7 +35,11 @@ func verifyWindowsWorkerLimits(policy ResourcePolicy, host uint32) error {
 	var minimum, maximum uintptr
 	var workingSetFlags uint32
 	windows.GetProcessWorkingSetSizeEx(windows.CurrentProcess(), &minimum, &maximum, &workingSetFlags)
-	if maximum != budget || workingSetFlags&windows.QUOTA_LIMITS_HARDWS_MAX_ENABLE == 0 {
+	residentLimit, err := windowsResidentLimit(budget)
+	if err != nil {
+		return err
+	}
+	if maximum != residentLimit || workingSetFlags&windows.QUOTA_LIMITS_HARDWS_MAX_ENABLE == 0 {
 		return errors.New("worker resident limit missing")
 	}
 	return nil

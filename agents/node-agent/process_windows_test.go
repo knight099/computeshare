@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -30,14 +31,19 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 	if mode == "parent" {
 		job, err := newWindowsJob(ResourcePolicy{CPUPercent: 25, MemoryMB: 128})
 		if err != nil {
+			fmt.Fprintln(os.Stderr, "supervisor job:", err)
 			os.Exit(2)
 		}
 		child, err := job.start(context.Background(), os.Args[0], []string{"-test.run=^TestWindowsJobProcessHelper$"}, map[string]string{"OPENCOMPUTE_JOB_PROCESS_HELPER": "wait"})
 		if err != nil {
+			fmt.Fprintln(os.Stderr, "supervisor startup:", err)
 			os.Exit(3)
 		}
 		ready := make([]byte, 5)
 		if _, err = io.ReadFull(child.output, ready); err != nil || string(ready) != "ready" {
+			var code uint32
+			_ = windows.GetExitCodeProcess(child.process, &code)
+			fmt.Fprintf(os.Stderr, "supervisor child readiness: error=%v code=%d marker=%q\n", err, code, ready)
 			os.Exit(6)
 		}
 		fmt.Println(child.pid)
@@ -57,7 +63,8 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 	var minimum, maximum uintptr
 	var workingSetFlags uint32
 	windows.GetProcessWorkingSetSizeEx(windows.CurrentProcess(), &minimum, &maximum, &workingSetFlags)
-	if uint64(maximum) != expectedMemory || workingSetFlags&windows.QUOTA_LIMITS_HARDWS_MAX_ENABLE == 0 {
+	expectedResident, _ := windowsResidentLimit(uintptr(expectedMemory))
+	if maximum != expectedResident || workingSetFlags&windows.QUOTA_LIMITS_HARDWS_MAX_ENABLE == 0 {
 		os.Exit(8)
 	}
 	// This check executes before any workload: assignment must be atomic at start.
@@ -250,6 +257,8 @@ func TestWindowsJobCancellationTerminatesItsWorkerPromptly(t *testing.T) {
 }
 func TestWindowsJobKillsWorkerAfterSupervisorDeath(t *testing.T) {
 	parent := exec.Command(os.Args[0], "-test.run=^TestWindowsJobProcessHelper$")
+	var diagnostics bytes.Buffer
+	parent.Stderr = &diagnostics
 	parent.Env = append(os.Environ(), "OPENCOMPUTE_JOB_PROCESS_HELPER=parent")
 	out, err := parent.StdoutPipe()
 	if err != nil {
@@ -258,19 +267,45 @@ func TestWindowsJobKillsWorkerAfterSupervisorDeath(t *testing.T) {
 	if err = parent.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = parent.Process.Kill(); _ = parent.Wait() }()
-	lines := make(chan string, 1)
+	waited := false
+	defer func() {
+		_ = parent.Process.Kill()
+		if !waited {
+			_ = parent.Wait()
+		}
+	}()
+	type readiness struct {
+		line string
+		err  error
+	}
+	lines := make(chan readiness, 1)
 	go func() {
 		scanner := bufio.NewScanner(out)
 		if scanner.Scan() {
-			lines <- scanner.Text()
+			lines <- readiness{line: scanner.Text()}
+		} else {
+			err := scanner.Err()
+			if err == nil {
+				err = io.EOF
+			}
+			lines <- readiness{err: err}
 		}
 	}()
 	var line string
 	select {
-	case line = <-lines:
+	case result := <-lines:
+		if result.err != nil {
+			parent.Process.Kill()
+			err := parent.Wait()
+			waited = true
+			t.Fatalf("supervisor readiness failed: %v exit=%v diagnostic=%s", result.err, err, diagnostics.String())
+		}
+		line = result.line
 	case <-time.After(10 * time.Second):
-		t.Fatal("supervisor did not create worker")
+		parent.Process.Kill()
+		err := parent.Wait()
+		waited = true
+		t.Fatalf("supervisor did not create worker: exit=%v diagnostic=%s", err, diagnostics.String())
 	}
 	pid, err := strconv.ParseUint(strings.TrimSpace(line), 10, 32)
 	if err != nil {
