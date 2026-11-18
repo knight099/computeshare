@@ -2,7 +2,7 @@
 
 Scope: implement the existing compiled-in public hash workload on Windows. Reuse the agent's protocol, session manager, workload validation, context cancellation and usage schema. This plan does not permit arbitrary executables, containers, scripts, files or network input. Read the engineering tracker and host matrix first.
 
-Current prerequisite: `de7544b` passes native Windows storage/identity tests and Linux source checks in CI 44221909237. The protected-state regression first failed in 44189215468 and now passes. All three jobs, including full Linux Compose acceptance, passed in 44221909237. Windows execution remains unavailable.
+Current checkpoint: `7699e30` passed native Windows bounded-adapter/resource tests, source checks and full Linux Compose acceptance in CI 44269831879. Earlier foundation evidence is in the host matrix and tracker. Windows execution remains unavailable while company-session/protocol and actual client/release acceptance remain open.
 
 ## Ownership and invariants
 
@@ -20,6 +20,7 @@ Current prerequisite: `de7544b` passes native Windows storage/identity tests and
 - The private adapter has one process-wide slot covering setup through reaping, so parallel calls cannot multiply a policy's allowance. Status queries and handle closure share the slot mutex. It launches only the current executable and fixed internal entrypoint; policy is supervisor metadata, not job-supplied commands. Check immediate Job Object CPU/memory/process/lifetime limits, hard working-set maximum, host topology, GOMAXPROCS and pipe endpoints before reading bounded strict JSON.
 - Check both deadline timers and absolute UTC lease expiry at worker checkpoints and before accepting a result. Wall-clock corrections must not turn an expired company lease into successful work. A clock injected at the private adapter boundary permits this regression without changing the machine clock.
 - Keep resident peak and private committed bytes distinct. Exercise a256MiB shared mapping under512MiB and128MiB working-set selections, with an actual resident-pressure positive control. Obtain endpoint usage from owned kernel handles; all API telemetry remains untrusted. Before capability enablement, include many short assignments in the session-level CPU/Stop acceptance matrix, not only single workers.
+- Set the resident sub-budget128KiB below selected RAM to contain fault/accounting peaks observed natively; keep the acceptance bound at the full selection. Use the same helper for configuring and verifying this sub-budget. Native buffer bindings must preserve Go pointer lifetime through the syscall, including lazy resolution/fresh stacks; integer-typed intermediate wrappers are unsafe for stack buffers.
 - Report Job Object CPU time and peak committed memory with clear units. Reports stay untrusted at the API. Wall time, configured iterations and CPU time are different measurements.
 
 ## Task sequence
