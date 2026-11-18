@@ -57,7 +57,7 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 		expectedMemory = mb * 1024 * 1024
 	}
 	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-	if err := windows.QueryInformationJobObject(0, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil || limits.BasicLimitInformation.ActiveProcessLimit != 1 || uint64(limits.ProcessMemoryLimit) != expectedMemory || limits.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
+	if err := queryWindowsJobInformation(0, windows.JobObjectExtendedLimitInformation, unsafe.Pointer(&limits), uint32(unsafe.Sizeof(limits))); err != nil || limits.BasicLimitInformation.ActiveProcessLimit != 1 || uint64(limits.ProcessMemoryLimit) != expectedMemory || limits.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
 		os.Exit(4)
 	}
 	var minimum, maximum uintptr
@@ -407,7 +407,7 @@ func TestWindowsCancelDuringStartupLeavesNoActiveProcess(t *testing.T) {
 			Assigned, Count uint32
 			IDs             [1]uintptr
 		}
-		err = windows.QueryInformationJobObject(job.handle, windows.JobObjectBasicProcessIdList, uintptr(unsafe.Pointer(&ids)), uint32(unsafe.Sizeof(ids)), nil)
+		err = queryWindowsJobInformation(job.handle, windows.JobObjectBasicProcessIdList, unsafe.Pointer(&ids), uint32(unsafe.Sizeof(ids)))
 		job.close()
 		if err != nil || ids.Count != 0 {
 			t.Fatalf("canceled startup retained a worker: %+v %v", ids, err)

@@ -136,7 +136,26 @@ func TestWindowsJobOwnsAndClosesItsKernelHandle(t *testing.T) {
 		t.Fatal("double close must be harmless")
 	}
 	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-	if err = windows.QueryInformationJobObject(handle, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err == nil {
+	if err = queryWindowsJobInformation(handle, windows.JobObjectExtendedLimitInformation, unsafe.Pointer(&limits), uint32(unsafe.Sizeof(limits))); err == nil {
 		t.Fatal("closed Job Object kernel handle remained usable")
+	}
+}
+
+func TestWindowsJobConfigurationFromFreshGoroutines(t *testing.T) {
+	// Exercise small fresh stacks, not only the already-expanded test stack.
+	// Native buffer addresses must stay valid through lazy syscall resolution.
+	for i := 0; i < 16; i++ {
+		result := make(chan error, 1)
+		go func() {
+			job, err := newWindowsJob(ResourcePolicy{CPUPercent: 25, MemoryMB: 128})
+			if err == nil {
+				_, _, err = job.limits()
+				job.close()
+			}
+			result <- err
+		}()
+		if err := <-result; err != nil {
+			t.Fatalf("fresh-stack kernel configuration failed: %v", err)
+		}
 	}
 }

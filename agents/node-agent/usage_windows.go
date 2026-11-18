@@ -60,7 +60,7 @@ func (j *windowsJob) usage() (windowsResourceUsage, error) {
 		User, Kernel, PeriodUser, PeriodKernel int64
 		Faults, Total, Active, Terminated      uint32
 	}
-	if err := windows.QueryInformationJobObject(j.handle, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&cpu)), uint32(unsafe.Sizeof(cpu)), nil); err != nil {
+	if err := queryWindowsJobInformation(j.handle, windows.JobObjectBasicAccountingInformation, unsafe.Pointer(&cpu), uint32(unsafe.Sizeof(cpu))); err != nil {
 		return result, err
 	}
 	if cpu.User < 0 || cpu.Kernel < 0 {
@@ -68,7 +68,7 @@ func (j *windowsJob) usage() (windowsResourceUsage, error) {
 	}
 	result.CPUUsec = (uint64(cpu.User) + uint64(cpu.Kernel)) / 10
 	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-	if err := windows.QueryInformationJobObject(j.handle, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil {
+	if err := queryWindowsJobInformation(j.handle, windows.JobObjectExtendedLimitInformation, unsafe.Pointer(&limits), uint32(unsafe.Sizeof(limits))); err != nil {
 		return result, err
 	}
 	result.PeakCommitBytes = uint64(limits.PeakProcessMemoryUsed)
