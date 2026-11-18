@@ -77,6 +77,10 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 			_ = cmd.Wait()
 			os.Exit(9)
 		} else {
+			if !errors.Is(err, windows.ERROR_ACCESS_DENIED) && !errors.Is(err, windows.ERROR_NOT_ENOUGH_QUOTA) {
+				fmt.Printf("unexpected-process-error:%v", err)
+				os.Exit(10)
+			}
 			fmt.Printf("process-denied:%v", err)
 		}
 		os.Exit(0)

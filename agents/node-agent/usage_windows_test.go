@@ -7,11 +7,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -72,6 +74,11 @@ func TestWindowsBusyWorkerStaysWithinOneCoreQuotaAndStops(t *testing.T) {
 }
 
 func TestWindowsActiveProcessLimitRejectsWorkerDescendant(t *testing.T) {
+	// Establish that this exact executable/test selection can start outside
+	// the constrained worker; missing files are not evidence of enforcement.
+	if err := exec.Command(os.Args[0], "-test.run=^$").Run(); err != nil {
+		t.Fatalf("descendant launch positive control failed: %v", err)
+	}
 	code, err, _, output, _ := runWindowsPressureFixture(t, ResourcePolicy{CPUPercent: 100, MemoryMB: 128}, "process-limit", nil, 5*time.Second)
 	if err != nil || code != 0 || !strings.Contains(output, "process-denied:") {
 		t.Fatalf("descendant process was not rejected: exit=%d err=%v output=%q", code, err, output)
@@ -97,6 +104,8 @@ func TestWindowsCPUAccountingAcrossContinuousIntervals(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
+	baseline, baselineTime := previous.CPUUsec, started
+	queryCycles := windows.NewLazySystemDLL("kernel32.dll").NewProc("QueryProcessCycleTime")
 	for interval := 1; interval <= 4; interval++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		<-ctx.Done()
@@ -105,24 +114,40 @@ func TestWindowsCPUAccountingAcrossContinuousIntervals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var created, exited, kernel, user windows.Filetime
-		if err := windows.GetProcessTimes(child.process, &created, &exited, &kernel, &user); err != nil {
-			t.Fatal(err)
+		sampled := time.Now()
+		elapsed := sampled.Sub(started)
+		var cycles uint64
+		if ok, _, err := queryCycles.Call(uintptr(child.process), uintptr(unsafe.Pointer(&cycles))); ok == 0 {
+			t.Fatalf("query process cycles: %v", err)
 		}
-		processUsec := ((uint64(kernel.HighDateTime)<<32 | uint64(kernel.LowDateTime)) + (uint64(user.HighDateTime)<<32 | uint64(user.LowDateTime))) / 10
-		// Queries are sequential while the worker is live; allow two Windows
-		// accounting ticks, not a percentage of the selected resource quota.
-		if processUsec < usage.CPUUsec || processUsec-usage.CPUUsec > 31250 {
-			t.Fatalf("job/process accounting mismatch: job=%d process=%d", usage.CPUUsec, processUsec)
-		}
-		elapsed := time.Since(started)
-		t.Logf("continuous CPU: interval=%d wall_seconds=%.3f job_usec=%d process_usec=%d interval_cores=%.3f", interval, elapsed.Seconds(), usage.CPUUsec, processUsec, float64(usage.CPUUsec-previous.CPUUsec)/elapsed.Seconds()/1000000)
-		previous, started = usage, time.Now()
+		t.Logf("continuous CPU: interval=%d wall_seconds=%.3f job_usec=%d cycles=%d interval_cores=%.3f", interval, elapsed.Seconds(), usage.CPUUsec, cycles, float64(usage.CPUUsec-previous.CPUUsec)/elapsed.Seconds()/1000000)
+		previous, started = usage, sampled
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := job.wait(ctx, child); !errors.Is(err, context.Canceled) {
 		t.Fatalf("continuous worker did not stop: %v", err)
+	}
+	stopped := time.Now()
+	usage, err := job.usage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(child.process, &created, &exited, &kernel, &user); err != nil {
+		t.Fatal(err)
+	}
+	processUsec := ((uint64(kernel.HighDateTime)<<32 | uint64(kernel.LowDateTime)) + (uint64(user.HighDateTime)<<32 | uint64(user.LowDateTime))) / 10
+	// Both counters are stable after termination. Supervisor descheduling
+	// between live queries must not turn correct accounting into a flaky test.
+	if processUsec != usage.CPUUsec {
+		t.Fatalf("terminated job/process accounting mismatch: job=%d process=%d", usage.CPUUsec, processUsec)
+	}
+	used := usage.CPUUsec - baseline
+	allowed := uint64(stopped.Sub(baselineTime).Seconds()*0.25*1000000) + 150000
+	t.Logf("sustained CPU: used_usec=%d allowed_usec=%d process_usec=%d", used, allowed, processUsec)
+	if used > allowed {
+		t.Errorf("sustained CPU usage exceeded selected one-core quota plus scheduling tolerance: used=%d allowed=%d", used, allowed)
 	}
 }
 
