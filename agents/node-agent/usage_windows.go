@@ -12,6 +12,19 @@ import (
 // Do not relabel this as a RAM limit or claim hostile-code isolation.
 type windowsResourceUsage struct{ CPUUsec, PeakCommitBytes uint64 }
 
+func windowsProcessCPUUsec(process windows.Handle) (uint64, error) {
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(process, &created, &exited, &kernel, &user); err != nil {
+		return 0, err
+	}
+	kernelTime := uint64(kernel.HighDateTime)<<32 | uint64(kernel.LowDateTime)
+	userTime := uint64(user.HighDateTime)<<32 | uint64(user.LowDateTime)
+	if userTime > ^uint64(0)-kernelTime {
+		return 0, errors.New("process CPU accounting overflow")
+	}
+	return (kernelTime + userTime) / 10, nil
+}
+
 func (j *windowsJob) usage() (windowsResourceUsage, error) {
 	var result windowsResourceUsage
 	if j.handle == 0 {

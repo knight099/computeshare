@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -71,6 +72,22 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 		os.Stdin.Close()
 	}
 	fmt.Print("ready")
+	percent := 25
+	if value := os.Getenv("OPENCOMPUTE_EXPECT_CPU_PERCENT"); value != "" {
+		percent, _ = strconv.Atoi(value)
+	}
+	if mode == "paced-hash" {
+		var job HashJob
+		if err := json.NewDecoder(os.Stdin).Decode(&job); err != nil {
+			os.Exit(12)
+		}
+		result, err := windowsHashWork(context.Background(), job, percent)
+		if err != nil {
+			os.Exit(13)
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(WorkResult{Result: result})
+		os.Exit(0)
+	}
 	switch mode {
 	case "echo":
 		_, _ = io.Copy(os.Stdout, os.Stdin)
@@ -117,10 +134,28 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 		fmt.Printf("allocated:%d:%x", len(data), sum)
 		os.Exit(0)
 	}
-	if mode == "busy" {
+	if mode == "busy" || mode == "raw-busy" || mode == "pause-busy" {
+		pacer, err := newWindowsCPUPacer(percent)
+		if err != nil {
+			os.Exit(14)
+		}
+		if mode == "pause-busy" {
+			if err := pacer.wait(context.Background()); err != nil {
+				os.Exit(15)
+			}
+			time.Sleep(2 * time.Second)
+			fmt.Print("resumed")
+		}
 		var sum [32]byte
 		for {
-			sum = sha256.Sum256(sum[:])
+			for i := 0; i < 4096; i++ {
+				sum = sha256.Sum256(sum[:])
+			}
+			if mode != "raw-busy" {
+				if err := pacer.wait(context.Background()); err != nil {
+					os.Exit(15)
+				}
+			}
 		}
 	}
 	if mode == "exit" {

@@ -26,7 +26,7 @@ func runWindowsPressureFixture(t *testing.T, policy ResourcePolicy, mode string,
 		t.Fatal(err)
 	}
 	defer job.close()
-	env := map[string]string{"OPENCOMPUTE_JOB_PROCESS_HELPER": mode, "OPENCOMPUTE_EXPECT_MEMORY_MB": strconv.Itoa(policy.MemoryMB)}
+	env := map[string]string{"OPENCOMPUTE_JOB_PROCESS_HELPER": mode, "OPENCOMPUTE_EXPECT_MEMORY_MB": strconv.Itoa(policy.MemoryMB), "OPENCOMPUTE_EXPECT_CPU_PERCENT": strconv.Itoa(policy.CPUPercent)}
 	for k, v := range extra {
 		env[k] = v
 	}
@@ -63,6 +63,8 @@ func TestWindowsPrivateCommitCapRejectsAllocationThatSucceedsUnderLargerCap(t *t
 	}
 }
 func TestWindowsBusyWorkerStaysWithinOneCoreQuotaAndStops(t *testing.T) {
+	// Exercise kernel controls plus the same CPU-time pacer used by the fixed
+	// Windows hash path. Raw cycle-only behavior is retained in diagnostics.
 	_, err, usage, _, elapsed := runWindowsPressureFixture(t, ResourcePolicy{CPUPercent: 25, MemoryMB: 128}, "busy", nil, time.Second)
 	if !errors.Is(err, context.DeadlineExceeded) || usage.CPUUsec == 0 {
 		t.Fatalf("busy worker/stop fixture failed: %v cpu=%d", err, usage.CPUUsec)
@@ -152,7 +154,7 @@ func TestWindowsCPUAccountingAcrossContinuousIntervals(t *testing.T) {
 }
 
 // Diagnostics do not replace the strict acceptance assertion above.
-func TestWindowsCPUQuotaLongWindowDiagnostics(t *testing.T) {
+func TestWindowsRawCycleQuotaDiagnostics(t *testing.T) {
 	host := windows.GetActiveProcessorCount(windows.ALL_PROCESSOR_GROUPS)
 	t.Logf("CPU topology: active=%d maximum=%d process=%d environment=%s", host, windows.GetMaximumProcessorCount(windows.ALL_PROCESSOR_GROUPS), runtime.NumCPU(), os.Getenv("NUMBER_OF_PROCESSORS"))
 	for _, percent := range []int{10, 25, 50} {
@@ -160,7 +162,7 @@ func TestWindowsCPUQuotaLongWindowDiagnostics(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, waitErr, usage, _, elapsed := runWindowsPressureFixture(t, ResourcePolicy{CPUPercent: percent, MemoryMB: 128}, "busy", nil, 4*time.Second)
+		_, waitErr, usage, _, elapsed := runWindowsPressureFixture(t, ResourcePolicy{CPUPercent: percent, MemoryMB: 128}, "raw-busy", nil, 4*time.Second)
 		if !errors.Is(waitErr, context.DeadlineExceeded) {
 			t.Fatal(waitErr)
 		}

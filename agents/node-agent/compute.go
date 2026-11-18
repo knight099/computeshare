@@ -36,6 +36,12 @@ type HashJob struct {
 }
 
 func hashWork(ctx context.Context, j HashJob) (string, error) {
+	return hashWorkWithCheckpoint(ctx, j, nil)
+}
+
+// Keep one algorithm/validator; runtime-specific resource pacing may pause or
+// fail at bounded checkpoints, but can never change the workload or result.
+func hashWorkWithCheckpoint(ctx context.Context, j HashJob, checkpoint func(context.Context) error) (string, error) {
 	if j.Workload != "synthetic-hash-v1" || j.Iterations < 1 || j.Iterations > 1000000 || len(j.Seed) < 1 || len(j.Seed) > 64 {
 		return "", errors.New("unsupported synthetic workload")
 	}
@@ -52,9 +58,19 @@ func hashWork(ctx context.Context, j HashJob) (string, error) {
 				return "", ctx.Err()
 			default:
 			}
+			if checkpoint != nil {
+				if err := checkpoint(ctx); err != nil {
+					return "", err
+				}
+			}
 		}
 		sum := sha256.Sum256(data)
 		data = sum[:]
+	}
+	if checkpoint != nil {
+		if err := checkpoint(ctx); err != nil {
+			return "", err
+		}
 	}
 	return hex.EncodeToString(data), nil
 }
