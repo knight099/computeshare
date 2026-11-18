@@ -11,14 +11,15 @@ import (
 )
 
 type controlAck struct {
-	Version  int      `json:"protocol_version"`
-	Type     string   `json:"type"`
-	Device   string   `json:"device_id"`
-	Sequence int64    `json:"sequence"`
-	Trace    string   `json:"trace_id"`
-	Offer    *HashJob `json:"offer"`
-	Cancel   string   `json:"cancel_attempt_id"`
-	JobState string   `json:"job_state"`
+	Version              int      `json:"protocol_version"`
+	Type                 string   `json:"type"`
+	Device               string   `json:"device_id"`
+	Sequence             int64    `json:"sequence"`
+	Trace                string   `json:"trace_id"`
+	Offer                *HashJob `json:"offer"`
+	Cancel               string   `json:"cancel_attempt_id"`
+	JobState             string   `json:"job_state"`
+	suppressedCompletion bool
 }
 type completion struct {
 	result WorkResult
@@ -50,7 +51,7 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 	if e != nil {
 		return e
 	}
-	if executionAvailable(m.root) {
+	if m.execution().available(m.root) {
 		caps.Runtimes = []string{"synthetic-hash-v1"}
 	}
 	connection, cancelConnection := context.WithCancel(ctx)
@@ -66,6 +67,8 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 	}()
 	results := make(chan completion, 1)
 	var active *HashJob
+	var activeContext context.Context
+	var activeCancel context.CancelFunc
 	defer func() {
 		cancelConnection()
 		m.disconnect()
@@ -85,6 +88,15 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 			message["capabilities"] = caps
 		}
 		session := m.snapshot()
+		// Snapshot can itself discover expiry. Fence wire success here, using
+		// that same session view, and tell the receiver to discard the result.
+		suppressed := kind == "JOB_COMPLETE" && (active == nil || session.Status != "ACTIVE" || session.ID != active.SessionID || activeContext == nil || activeContext.Err() != nil)
+		if suppressed {
+			message["type"] = "JOB_FAIL"
+			if active != nil {
+				attempt = map[string]interface{}{"id": active.AttemptID, "epoch": active.Epoch}
+			}
+		}
 		if session.ID != "" && session.Status != "STARTING" {
 			message["session"] = map[string]string{"id": session.ID, "status": session.Status}
 		}
@@ -93,10 +105,10 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 		}
 		_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if e := ws.WriteJSON(message); e != nil {
-			return controlAck{}, errors.New("gateway send failed")
+			return controlAck{suppressedCompletion: suppressed}, errors.New("gateway send failed")
 		}
 		_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
-		var ack controlAck
+		ack := controlAck{suppressedCompletion: suppressed}
 		if e := ws.ReadJSON(&ack); e != nil {
 			return ack, errors.New("gateway acknowledgement unavailable")
 		}
@@ -146,11 +158,20 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 				values["usage"] = map[string]uint64{"cpu_usage_usec": outcome.result.CPUUsec, "memory_peak_bytes": outcome.result.MemoryBytes}
 			}
 			ack, e := send(kind, values)
+			if ack.suppressedCompletion {
+				outcome = completion{err: context.Canceled}
+			}
 			status := "FAILED"
-			if e == nil && ack.JobState == "SUCCEEDED" {
+			if outcome.err == nil && e == nil && ack.JobState == "SUCCEEDED" {
 				status = "VERIFIED"
 			}
 			m.finished(j, outcome.result, status)
+			// The producer must not cancel on ordinary return: a buffered result
+			// still needs to be distinguished from contributor cancellation.
+			if activeCancel != nil {
+				activeCancel()
+				activeCancel = nil
+			}
 			active = nil
 			if e != nil {
 				return e
@@ -195,6 +216,8 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 				continue
 			}
 			active = &j
+			activeContext = workerCtx
+			activeCancel = cancel
 			accepted, e := send("JOB_ACCEPT", fields(j))
 			if e != nil {
 				cancel()
@@ -222,8 +245,7 @@ func connect(ctx context.Context, s State, m *SessionManager) error {
 				continue
 			}
 			go func(job HashJob, p ResourcePolicy) {
-				defer cancel()
-				result, e := runLimited(workerCtx, m.root, job, p)
+				result, e := m.execution().execute(workerCtx, m.root, job, p)
 				results <- completion{result, e}
 			}(j, session.Policy)
 		}

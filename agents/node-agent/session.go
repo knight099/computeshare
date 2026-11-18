@@ -25,6 +25,7 @@ func (s LocalSession) live(boot string, uptime float64, now time.Time) bool {
 }
 
 type SessionManager struct {
+	backend        executionBackend // immutable after construction; no external override
 	mu             sync.Mutex
 	session        LocalSession
 	cancel         context.CancelFunc
@@ -171,8 +172,8 @@ func (m *SessionManager) start(ctx context.Context, b StartSharing) error {
 	if !valid {
 		return errors.New("unsupported availability duration")
 	}
-	if !executionAvailable(m.root) {
-		return errors.New("execution disabled: " + runtimeUnavailableReason())
+	if !m.execution().available(m.root) {
+		return errors.New("execution disabled: " + m.execution().reason())
 	}
 	boot, up, e := bootClock()
 	if e != nil {
