@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,5 +68,22 @@ func TestWindowsBusyWorkerStaysWithinOneCoreQuotaAndStops(t *testing.T) {
 	allowed := uint64(elapsed.Seconds()*0.25*1000000) + 150000
 	if usage.CPUUsec > allowed {
 		t.Fatalf("CPU usage exceeded selected one-core quota plus scheduling tolerance: used=%d allowed=%d", usage.CPUUsec, allowed)
+	}
+}
+
+// Diagnostics do not replace the strict acceptance assertion above.
+func TestWindowsCPUQuotaLongWindowDiagnostics(t *testing.T) {
+	host := windows.GetActiveProcessorCount(windows.ALL_PROCESSOR_GROUPS)
+	t.Logf("CPU topology: active=%d maximum=%d process=%d environment=%s", host, windows.GetMaximumProcessorCount(windows.ALL_PROCESSOR_GROUPS), runtime.NumCPU(), os.Getenv("NUMBER_OF_PROCESSORS"))
+	for _, percent := range []int{10, 25, 50} {
+		rate, err := windowsCPUCap(percent, int(host))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, waitErr, usage, _, elapsed := runWindowsPressureFixture(t, ResourcePolicy{CPUPercent: percent, MemoryMB: 128}, "busy", nil, 4*time.Second)
+		if !errors.Is(waitErr, context.DeadlineExceeded) {
+			t.Fatal(waitErr)
+		}
+		t.Logf("CPU diagnostic: selected=%d rate=%d wall_seconds=%.3f cpu_usec=%d utilization_cores=%.3f", percent, rate, elapsed.Seconds(), usage.CPUUsec, float64(usage.CPUUsec)/elapsed.Seconds()/1000000)
 	}
 }
