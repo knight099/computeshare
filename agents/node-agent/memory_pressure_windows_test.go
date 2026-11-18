@@ -7,13 +7,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
 const windowsSharedPressureBytes = 256 * 1024 * 1024
+
+// The view is native-owned memory, not a Go allocation. Use the documented
+// SliceHeader-on-an-existing-slice interop pattern; retain the mapping/view
+// until all accesses finish. No unchecked uintptr-to-pointer conversion.
+func mappedWindowsPressureBytes(view uintptr) (data []byte) {
+	header := (*reflect.SliceHeader)(unsafe.Pointer(&data))
+	header.Data = view
+	header.Len = windowsSharedPressureBytes
+	header.Cap = windowsSharedPressureBytes
+	return data
+}
 
 func TestWindowsResidentCapUnderSharedMappingPressure(t *testing.T) {
 	if _, err := windowsProcessMemory(0); err == nil {
@@ -28,16 +41,9 @@ func TestWindowsResidentCapUnderSharedMappingPressure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := make([]byte, 64*1024)
+	data := mappedWindowsPressureBytes(view)
 	for i := 0; i < len(data); i += 4096 {
 		data[i] = 1
-	}
-	for offset := 0; offset < windowsSharedPressureBytes; offset += len(data) {
-		var written uintptr
-		if err := windows.WriteProcessMemory(windows.CurrentProcess(), view+uintptr(offset), &data[0], uintptr(len(data)), &written); err != nil || written != uintptr(len(data)) {
-			windows.UnmapViewOfFile(view)
-			t.Fatalf("initialize shared pressure pages: %v", err)
-		}
 	}
 	if err := windows.UnmapViewOfFile(view); err != nil {
 		t.Fatal(err)

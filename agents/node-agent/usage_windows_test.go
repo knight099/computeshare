@@ -18,6 +18,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var windowsTestTimeAdjustment = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetSystemTimeAdjustment")
+
 func runWindowsPressureFixture(t *testing.T, policy ResourcePolicy, mode string, extra map[string]string, duration time.Duration) (uint32, error, windowsResourceUsage, string, time.Duration) {
 	t.Helper()
 	started := time.Now()
@@ -140,10 +142,38 @@ func TestWindowsCPUAccountingAcrossContinuousIntervals(t *testing.T) {
 		t.Fatal(err)
 	}
 	processUsec := ((uint64(kernel.HighDateTime)<<32 | uint64(kernel.LowDateTime)) + (uint64(user.HighDateTime)<<32 | uint64(user.LowDateTime))) / 10
-	// Both counters are stable after termination. Supervisor descheduling
-	// between live queries must not turn correct accounting into a flaky test.
-	if processUsec != usage.CPUUsec {
-		t.Fatalf("terminated job/process accounting mismatch: job=%d process=%d", usage.CPUUsec, processUsec)
+	var adjustment, increment uint32
+	var disabled uint32
+	if ok, _, err := windowsTestTimeAdjustment.Call(uintptr(unsafe.Pointer(&adjustment)), uintptr(unsafe.Pointer(&increment)), uintptr(unsafe.Pointer(&disabled))); ok == 0 || increment == 0 {
+		t.Fatalf("CPU accounting clock resolution unavailable: %v", err)
+	}
+	for sample := 0; sample < 3; sample++ {
+		time.Sleep(20 * time.Millisecond)
+		usage, err = job.usage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		processUsec, err = windowsProcessCPUUsec(child.process)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("post-exit CPU accounting: sample=%d job_usec=%d process_usec=%d clock_increment_100ns=%d", sample, usage.CPUUsec, processUsec, increment)
+	}
+	// Job accounting and summed process/thread accounting need not round at
+	// exactly the same boundary. Permit only one observed native clock tick
+	// for cross-counter consistency; resource acceptance below uses the larger
+	// endpoint and its original unchanged CPU-time quota/tolerance.
+	difference := usage.CPUUsec
+	if processUsec > difference {
+		difference = processUsec - difference
+	} else {
+		difference -= processUsec
+	}
+	if difference > uint64(increment+9)/10 {
+		t.Errorf("terminated CPU counters differ beyond one clock tick: job=%d process=%d tick_100ns=%d", usage.CPUUsec, processUsec, increment)
+	}
+	if processUsec > usage.CPUUsec {
+		usage.CPUUsec = processUsec
 	}
 	used := usage.CPUUsec - baseline
 	allowed := uint64(stopped.Sub(baselineTime).Seconds()*0.25*1000000) + 150000

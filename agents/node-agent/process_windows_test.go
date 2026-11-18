@@ -82,17 +82,11 @@ func TestWindowsJobProcessHelper(t *testing.T) {
 		if err != nil {
 			os.Exit(17)
 		}
-		data := make([]byte, 64*1024)
+		data := mappedWindowsPressureBytes(view)
 		var sum uint64
 		for pass := 0; pass < 3; pass++ {
-			for offset := 0; offset < windowsSharedPressureBytes; offset += len(data) {
-				var read uintptr
-				if err := windows.ReadProcessMemory(windows.CurrentProcess(), view+uintptr(offset), &data[0], uintptr(len(data)), &read); err != nil || read != uintptr(len(data)) {
-					os.Exit(20)
-				}
-				for i := 0; i < len(data); i += 4096 {
-					sum += uint64(data[i])
-				}
+			for i := 0; i < len(data); i += 4096 {
+				sum += uint64(data[i])
 			}
 		}
 		if sum != 3*(windowsSharedPressureBytes/4096) {
