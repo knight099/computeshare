@@ -218,6 +218,37 @@ func readSecret(path string) ([]byte, error) {
 	}
 	return cryptState(data[len(statePrefix):], false)
 }
+
+// Modern Windows replacement semantics keep old reader handles valid while
+// making the complete new file visible atomically. No delete/in-place fallback.
+func replaceWindowsState(handle windows.Handle, path string) error {
+	absolute, e := checkedWindowsPath(path)
+	if e != nil {
+		return e
+	}
+	name, e := windows.UTF16FromString(absolute)
+	if e != nil {
+		return e
+	}
+	name = name[:len(name)-1]
+	type renameInfo struct {
+		Flags         uint32
+		RootDirectory windows.Handle
+		NameLength    uint32
+		Name          [1]uint16
+	}
+	var layout renameInfo
+	length := int(unsafe.Offsetof(layout.Name)) + len(name)*2
+	buffer := make([]byte, length)
+	info := (*renameInfo)(unsafe.Pointer(&buffer[0]))
+	info.Flags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
+	info.NameLength = uint32(len(name) * 2)
+	copy(unsafe.Slice(&info.Name[0], len(name)), name)
+	if e = windows.SetFileInformationByHandle(handle, windows.FileRenameInfoEx, &buffer[0], uint32(length)); e != nil {
+		return &os.PathError{Op: "replace protected state", Path: absolute, Err: e}
+	}
+	return nil
+}
 func writeSecret(path string, data []byte) error {
 	// CLI entry validates the directory; library/test callers receive the same protection.
 	if e := prepareStateDirectory(filepath.Dir(path)); e != nil {
@@ -241,12 +272,13 @@ func writeSecret(path string, data []byte) error {
 	if e != nil {
 		return e
 	}
-	handle, e := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	handle, e := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE|windows.DELETE, windows.FILE_SHARE_READ|windows.FILE_SHARE_DELETE, sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
 	if e != nil {
 		return e
 	}
 	f := os.NewFile(uintptr(handle), temp)
 	defer os.Remove(temp)
+	defer f.Close()
 	if _, e = f.Write(append(append([]byte(nil), statePrefix...), encrypted...)); e != nil {
 		f.Close()
 		return e
@@ -255,16 +287,5 @@ func writeSecret(path string, data []byte) error {
 		f.Close()
 		return e
 	}
-	if e = f.Close(); e != nil {
-		return e
-	}
-	from, e := windows.UTF16PtrFromString(temp)
-	if e != nil {
-		return e
-	}
-	to, e := windows.UTF16PtrFromString(path)
-	if e != nil {
-		return e
-	}
-	return windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+	return replaceWindowsState(handle, path)
 }

@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"golang.org/x/sys/windows"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -164,6 +165,10 @@ func TestWindowsAtomicReplacementWorksWhileReaderIsOpen(t *testing.T) {
 	if err := writeSecret(path, []byte("before")); err != nil {
 		t.Fatal(err)
 	}
+	prior, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	reader, err := openWindowsState(path, windows.GENERIC_READ|windows.READ_CONTROL, windows.OPEN_EXISTING, false)
 	if err != nil {
 		t.Fatal(err)
@@ -171,6 +176,10 @@ func TestWindowsAtomicReplacementWorksWhileReaderIsOpen(t *testing.T) {
 	defer reader.Close()
 	if err = writeSecret(path, []byte("after")); err != nil {
 		t.Fatal(err)
+	}
+	snapshot, err := io.ReadAll(reader)
+	if err != nil || !bytes.Equal(snapshot, prior) {
+		t.Fatal("replacement changed an existing reader snapshot")
 	}
 	data, err := readSecret(path)
 	if err != nil || string(data) != "after" {
@@ -205,5 +214,25 @@ func TestWindowsRejectsDirectWorkerEntrypoint(t *testing.T) {
 	output, err := child.CombinedOutput()
 	if err == nil || bytes.Contains(output, []byte("315fc33d")) {
 		t.Fatalf("Windows worker bypassed disabled runtime: %v", err)
+	}
+}
+
+func TestWindowsFailedReplacementPreservesPriorState(t *testing.T) {
+	dir := testStateDir(t)
+	path := filepath.Join(dir, "secret.json")
+	if err := writeSecret(path, []byte("before")); err != nil {
+		t.Fatal(err)
+	}
+	held, err := openWindowsState(path, windows.GENERIC_READ|windows.GENERIC_WRITE|windows.READ_CONTROL, windows.OPEN_ALWAYS, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	if err = writeSecret(path, []byte("after")); err == nil {
+		t.Fatal("replaced a handle that explicitly denies delete sharing")
+	}
+	data, err := readSecret(path)
+	if err != nil || string(data) != "before" {
+		t.Fatal("failed replacement destroyed prior state")
 	}
 }
